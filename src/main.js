@@ -47,19 +47,48 @@ function createQrCode() {
 
 function renderSharePage() {
   if (!new URLSearchParams(window.location.search).has("story") || !state.story?.confirmed) return false;
+  const familyResponse = JSON.parse(localStorage.getItem("yiloi-family-response-v1") || "null");
+  const title = state.story.title || "我的回憶";
   app.innerHTML = `<div class="shell share-page">
     <header class="topbar"><div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div><span class="step">長者已確認</span></header>
-    <section class="share-hero"><p class="eyebrow">一段留給家人的回憶</p><h1>${escapeHtml(state.story.title || "我的回憶")}</h1><p>呢段故事由長者親自審閱及確認。</p></section>
+    <section class="share-hero"><p class="eyebrow">一段留給家人的回憶</p><h1>${escapeHtml(title)}</h1><p>呢段故事由長者親自審閱及確認。你可以慢慢睇，亦可以分享一小段自己嘅故事。</p></section>
+    <div class="chapter-progress"><span class="active">1</span><i></i><span class="${familyResponse ? "active" : ""}">2</span><i></i><span class="${familyResponse ? "active" : ""}">3</span></div>
+    <p class="chapter-label">CHAPTER 1 · 公公的故事</p>
     ${state.photo?.image ? `<img class="shared-photo" src="${state.photo.image}" alt="${escapeHtml(state.photo.title || "回憶相片")}" />` : ""}
     <article class="shared-story"><span class="ai-label">長者已確認</span><p>${escapeHtml(state.story.text)}</p></article>
-    <section class="guest-message"><h2>留一句話俾長者</h2><textarea id="guest-note" rows="3" placeholder="例如：多謝你同我分享呢段回憶。"></textarea><button id="send-guest-note" class="primary">送出語音／文字留言（Demo）</button><p id="guest-status" class="confirmed" hidden>✓ 留言已送出（Demo）</p></section>
+    <section class="family-invite">
+      <p class="eyebrow">輪到你了</p><h2>你還記得自己第一次工作嗎？</h2>
+      <p>可以錄一段語音、寫幾句，或者跳過，繼續睇故事。你唔需要註冊帳戶。</p>
+      ${familyResponse ? `<div class="response-saved"><strong>✓ 你已分享</strong><p>${escapeHtml(familyResponse.text)}</p></div>
+        <section class="connection-card"><span class="ai-label">兩代人的第一次工作</span><h3>不同年代，相似的第一次</h3><p>公公 18 歲做裁縫，家人分享了自己的第一份工作。呢兩段經歷可以成為下一次見面時嘅話題。</p></section>` : `<div class="response-options">
+          <button id="family-voice" class="response-option"><span>🎙</span><strong>錄一段語音分享</strong><small>保留你自己嘅語氣</small></button>
+          <button id="family-text" class="response-option"><span>✍</span><strong>寫幾句就好</strong><small>分享一小段回憶</small></button>
+          <button id="family-skip" class="response-option muted"><span>→</span><strong>先跳過</strong><small>繼續睇故事</small></button>
+        </div>
+        <div id="family-composer" class="family-composer" hidden><textarea id="family-note" rows="4" placeholder="例如：我第一份暑期工係喺咖啡店做，每日都好緊張。"></textarea><div><button id="save-family-note" class="primary">分享呢段回憶</button><button id="cancel-family-note" class="text-button">稍後先</button></div></div>`}
+    </section>
+    <section class="next-chapter"><p class="eyebrow">下一章</p><h2>屋企人返工返學後，一齊食飯</h2><p>繼續閱讀長者其他回憶，慢慢拼返一個屬於你哋嘅故事。</p><button id="continue-story" class="secondary">繼續睇故事（Demo）</button></section>
     <footer><span>憶旅・由長者決定分享內容</span><a href="${window.location.pathname}">返回我的憶旅</a></footer>
   </div>`;
-  document.querySelector("#send-guest-note").addEventListener("click", () => {
-    const note = document.querySelector("#guest-note").value.trim();
-    if (!note) return;
-    document.querySelector("#guest-status").hidden = false;
-    document.querySelector("#send-guest-note").disabled = true;
+  document.querySelector("#family-text")?.addEventListener("click", () => { document.querySelector("#family-composer").hidden = false; });
+  document.querySelector("#family-voice")?.addEventListener("click", () => {
+    document.querySelector("#family-composer").hidden = false;
+    document.querySelector("#family-note").placeholder = "語音 Demo：請先用文字輸入你想分享嘅內容。";
+    document.querySelector("#family-note").focus();
+  });
+  document.querySelector("#family-skip")?.addEventListener("click", () => {
+    document.querySelector(".family-invite").innerHTML = `<p class="eyebrow">繼續閱讀</p><h2>你可以之後先分享</h2><p>唔緊要，先睇長者嘅下一段故事。下次返嚟，仍然可以分享你嘅回憶。</p>`;
+  });
+  document.querySelector("#save-family-note")?.addEventListener("click", () => {
+    const text = document.querySelector("#family-note").value.trim();
+    if (!text) return;
+    localStorage.setItem("yiloi-family-response-v1", JSON.stringify({ text, at: new Date().toISOString() }));
+    renderSharePage();
+  });
+  document.querySelector("#cancel-family-note")?.addEventListener("click", () => { document.querySelector("#family-composer").hidden = true; });
+  document.querySelector("#continue-story")?.addEventListener("click", (event) => {
+    event.currentTarget.textContent = "下一章已打開（Demo）";
+    event.currentTarget.disabled = true;
   });
   return true;
 }

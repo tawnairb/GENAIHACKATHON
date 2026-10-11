@@ -104,7 +104,26 @@ h3 { margin: 10px 0 6px; color: #24574f; font-size: 1.35rem; }
 .shared-photo { display: block; width: 100%; max-height: 430px; object-fit: cover; border-radius: 20px; }
 .shared-story, .guest-message { margin-top: 20px; padding: 22px; border-radius: 18px; background: #fff; }
 .shared-story p { margin-bottom: 0; line-height: 1.8; white-space: pre-wrap; }
-.guest-message textarea { display: block; width: 100%; margin: 12px 0; padding: 13px; border: 1px solid #d8d0c4; border-radius: 10px; font: inherit; line-height: 1.5; }
+.chapter-progress { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 20px 0 10px; }
+.chapter-progress span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: #8b857c; background: #e8e1d8; font-weight: 800; }
+.chapter-progress span.active { color: #fff; background: #27665b; }
+.chapter-progress i { width: 46px; height: 2px; background: #d8d0c4; }
+.chapter-label { margin: 0 0 10px; color: #b65f3e; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-align: center; }
+.family-invite, .next-chapter { margin-top: 20px; padding: 22px; border-radius: 18px; background: #fffaf4; }
+.family-invite h2 { max-width: 560px; }
+.family-invite > p:not(.eyebrow), .next-chapter p:not(.eyebrow) { color: #6d6860; line-height: 1.6; }
+.response-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
+.response-option { display: grid; min-height: 130px; align-content: center; gap: 7px; padding: 15px; border: 2px solid #e8d7c8; border-radius: 14px; color: #24574f; background: #fff; text-align: left; cursor: pointer; }
+.response-option:hover { border-color: #b65f3e; }
+.response-option span { font-size: 1.6rem; }
+.response-option small { color: #6d6860; }
+.response-option.muted { color: #6d6860; border-color: #ded8cd; }
+.family-composer { margin-top: 14px; padding: 15px; border-radius: 12px; background: #fff; }
+.family-composer textarea { display: block; width: 100%; margin-bottom: 12px; padding: 13px; border: 1px solid #d8d0c4; border-radius: 10px; font: inherit; line-height: 1.5; }
+.response-saved { margin-top: 14px; padding: 15px; border-radius: 12px; color: #27665b; background: #e5f3e8; }
+.response-saved p { margin-bottom: 0; color: #51483f; line-height: 1.6; }
+.connection-card { margin-top: 15px; padding: 18px; border-radius: 14px; background: #f1edff; }
+.connection-card p { line-height: 1.6; }
 .share-page footer a { color: #27665b; }
 .dashboard-hero { padding: 48px 0 24px; }
 .dashboard-hero p:last-child { max-width: 650px; color: #6d6860; line-height: 1.6; }
@@ -184,4 +203,5 @@ footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 1
   .safety-alert button { display: block; width: 100%; }
   footer { flex-direction: column; }
   .share-result { align-items: flex-start; flex-direction: column; }
+  .response-options { grid-template-columns: 1fr; }
 }
