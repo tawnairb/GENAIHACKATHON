@@ -15,6 +15,7 @@ const state = {
   view: "senior",
   topic: localStorage.getItem("yiloi-topic-v1") || "",
   focusMode: false,
+  workflowStage: 1,
   listening: false,
   paused: false,
   startedAt: Date.now(),
@@ -260,6 +261,33 @@ function renderFocusMode() {
   document.querySelector("#focus-end").addEventListener("click", () => { state.focusMode = false; render(); });
 }
 
+function renderWorkflow() {
+  const stages = [
+    ["1", "活動前", "真人準備傾偈", "背景卡、建議題目、避開話題"],
+    ["2", "活動中", "真人陪伴對話", "AI 記錄、標記重點，不打斷交流"],
+    ["3", "活動後", "一起確認及延續", "故事卡、家人回應、下一次話題"],
+  ];
+  const stageContent = {
+    1: `<div class="workflow-content">
+      <div class="workflow-icon">▤</div><div><h3>俾訪問者一眼睇晒</h3><p>真人先了解長者背景，再決定點樣開始傾。AI 只提供準備資料，唔會代替訪問者發問。</p>
+      <div class="prep-cards"><span>長者背景卡</span><span>今日 3 條建議題目</span><span>避開話題</span></div></div>
+    </div>`,
+    2: `<div class="workflow-content">
+      <div class="workflow-icon live">●</div><div><h3>專心陪伴，唔使低頭抄筆記</h3><p>訪問者繼續望住長者傾偈。AI 在背景轉錄、標記人名地點年份，並在需要時提示休息或轉換話題。</p>
+      <div class="tool-note"><strong>AI 工具提示</strong><span>「深水埗」 · 地點</span><span>「18 歲」 · 年份</span><span>可稍後追問</span></div></div>
+    </div>`,
+    3: `<div class="workflow-content">
+      <div class="workflow-icon">♡</div><div><h3>故事係邀請，不係終點</h3><p>長者先確認內容及分享權限。之後家人可以閱讀、回應，為下一次真人見面帶來新話題。</p>
+      <div class="prep-cards"><span>長者確認故事卡</span><span>家人語音／文字回應</span><span>下一次續談提示</span></div></div>
+    </div>`,
+  };
+  return `<section class="workflow-section">
+    <div class="workflow-heading"><div><p class="eyebrow">人係中心・AI 係工具</p><h2>一次互動，三個階段</h2></div><span class="human-badge">真人主導</span></div>
+    <div class="workflow-steps">${stages.map(([number, title, subtitle]) => `<button class="workflow-step ${state.workflowStage === Number(number) ? "active" : ""}" data-workflow-stage="${number}"><b>${number}</b><strong>${title}</strong><small>${subtitle}</small></button>`).join("")}</div>
+    ${stageContent[state.workflowStage]}
+  </section>`;
+}
+
 function renderCaregiverDashboard() {
   const storyStatus = state.story?.confirmed ? "已確認" : state.story ? "待長者確認" : "未開始";
   const safetyStatus = state.paused ? "需要即時關注" : "目前沒有通知";
@@ -329,10 +357,11 @@ function render() {
         </div>
       </header>
       <section class="intro">
-        <p class="eyebrow">廣東話 AI 回憶助手</p>
+        <p class="eyebrow">真人陪伴・AI 幕後支援</p>
         <h1>${selectedTopic ? `今日講吓：${selectedTopic[1]}` : "今日想由邊段回憶開始？"}</h1>
-        <p>我係 AI 助手，唔係真人。放心，我唔會問銀行資料、身份證號碼或者地址。</p>
+        <p>訪問者會由頭到尾陪住你傾偈。憶旅只會幫忙記錄、整理同準備下一次話題。</p>
       </section>
+      ${renderWorkflow()}
       <section class="topic-section">
         <div class="section-heading">
           <div><p class="eyebrow">揀一個你想講嘅方向</p><h2>由邊段回憶開始？</h2></div>
@@ -449,6 +478,10 @@ function render() {
     </div>`;
 
   document.querySelector("#listen").addEventListener("click", startListening);
+  document.querySelectorAll("[data-workflow-stage]").forEach((button) => button.addEventListener("click", () => {
+    state.workflowStage = Number(button.dataset.workflowStage);
+    render();
+  }));
   document.querySelectorAll("[data-topic]").forEach((button) => button.addEventListener("click", () => selectTopic(button.dataset.topic)));
   document.querySelector("#change-topic")?.addEventListener("click", () => {
     state.topic = "";
