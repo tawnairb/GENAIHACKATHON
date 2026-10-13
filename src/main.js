@@ -30,6 +30,42 @@ function escapeHtml(value) {
   }[character]));
 }
 
+// 前端呼叫代理設定（可在 dev 時覆寫 window.PROXY_URL）
+const PROXY_URL = window.PROXY_URL || 'http://localhost:3001/api/chat';
+
+// 向後端代理查詢 LLM，失敗時回傳 null（呼叫者應 fallback）
+async function queryProxy(messages) {
+  try {
+    const payload = { model: 'deepseek-flash', messages };
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      console.warn('Proxy returned', resp.status);
+      return null;
+    }
+    const ct = resp.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await resp.json();
+      // OpenAI-compatible response parsing
+      if (data.choices && data.choices[0] && data.choices[0].message) {
+        return data.choices[0].message.content;
+      }
+      // Other providers may return { reply: '...' }
+      if (data.reply) return data.reply;
+      // Fallback to first string field
+      const firstString = JSON.stringify(data);
+      return firstString;
+    }
+    return await resp.text();
+  } catch (err) {
+    console.error('queryProxy error', err);
+    return null;
+  }
+}
+
 function createQrCode() {
   const cells = [
     "1111111001011111111", "1000001011011000001", "1011101000011011101",
@@ -227,7 +263,7 @@ function isDangerous(text) {
   return DANGER_PATTERNS.some((pattern) => text.includes(pattern));
 }
 
-function handleTranscript(text) {
+async function handleTranscript(text) {
   if (!text.trim() || state.paused) return;
   addMessage("user", text.trim());
   if (isDangerous(text)) {
@@ -236,7 +272,25 @@ function handleTranscript(text) {
     speak("多謝你肯同我講呢啲感受。我哋而家先停一停，搵真人照顧者陪住你。");
     return;
   }
-  const reply = mockReply(text);
+
+  // 優先嘗試呼叫後端代理，失敗時回退至本地 mock
+  const conversation = [
+    { role: 'system', content: AGENT_SYSTEM_PROMPT },
+    ...state.messages.map((m) => ({ role: m.role === 'agent' ? 'assistant' : m.role, content: m.text })),
+  ];
+  let reply = null;
+  try {
+    reply = await queryProxy(conversation);
+  } catch (e) {
+    console.warn('proxy call failed', e);
+    reply = null;
+  }
+
+  if (!reply) {
+    // fallback to local mock
+    reply = mockReply(text);
+  }
+
   const sensitive = SENSITIVE_PATTERNS.some((pattern) => text.includes(pattern));
   addMessage("agent", sensitive ? `我聽到你提到一段重要而可能難受嘅經歷。${reply}如果你想休息，我哋可以下次再傾。` : reply);
   speak(sensitive ? `我聽到你提到一段重要而可能難受嘅經歷。${reply}` : reply);
