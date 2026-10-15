@@ -62,6 +62,7 @@ h3 { margin: 10px 0 6px; color: #24574f; font-size: 1.35rem; }
 .speaker-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .speaker-picker button { min-height: 48px; padding: 9px 14px; border: 2px solid #d4e3d8; border-radius: 12px; color: #24574f; background: #fff; font-weight: 800; }
 .speaker-picker button.selected { border-color: #27665b; color: #fff; background: #27665b; }
+.current-speaker { align-self: center; color: #27665b; font-size: .88rem; font-weight: 800; }
 .transcription-consent { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; color: #51483f; font-size: .82rem; line-height: 1.5; }
 .transcription-consent input { flex: 0 0 22px; width: 22px; height: 22px; margin: 0; accent-color: #27665b; }
 .composer-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
