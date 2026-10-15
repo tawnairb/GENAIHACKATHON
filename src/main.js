@@ -12,7 +12,7 @@ const state = {
   photo: JSON.parse(localStorage.getItem("yiloi-photo-v1") || "null"),
   story: JSON.parse(localStorage.getItem(STORY_KEY) || "null"),
   sharing: JSON.parse(localStorage.getItem(SHARE_KEY) || "null"),
-  view: "senior",
+  view: "caregiver",
   topic: localStorage.getItem("yiloi-topic-v1") || "",
   focusMode: false,
   workflowStage: 1,
@@ -332,72 +332,75 @@ function renderWorkflow() {
 function renderCaregiverDashboard() {
   const storyStatus = state.story?.confirmed ? "已確認" : state.story ? "待長者確認" : "未開始";
   const safetyStatus = state.paused ? "需要即時關注" : "目前沒有通知";
+  const stage = state.workflowStage;
+  const stageContent = {
+    1: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card profile-card">
+        <p class="eyebrow">長者備忘卡</p><h2>阿梅婆婆</h2>
+        <p class="muted">深水埗 / 石硤尾 · 成長背景速讀</p>
+        <div class="caregiver-divider"></div>
+        <small>成長經歷</small><p>成長於石硤尾，18 歲起於深水埗製衣廠工作逾 20 年；性格爽朗好客，最拿手煮梅菜扣肉。</p>
+        <small>溝通與健康提示</small><p>右耳聽力稍弱，對話時需正面面向長者，語速放慢。</p>
+        <div class="caregiver-alert"><strong>⚠ 避開話題提醒</strong><span>避免主動問及丈夫數年前因病離世細節；若長者感傷，以溫和傾聽與適當為主。</span></div>
+      </section>
+      <section class="caregiver-card topic-card-panel">
+        <p class="eyebrow">今日破冰題目</p><h2>選擇交談切入點</h2>
+        <p class="muted">選取一個容易喚起愉快記憶的生活話題：</p>
+        <button class="caregiver-topic selected" data-caregiver-topic="work"><strong>第一份工・車衣廠歲月</strong><span>年輕時的自豪感、師傅經歷、出第一份糧的滋味</span><small>開場問句：「阿梅婆婆，你仲記唔記得 18 歲嗰陣第一份工係做咩？」</small><b>✓ 今日已選</b></button>
+        <button class="caregiver-topic" data-caregiver-topic="food"><strong>一餐飯與最重要的人</strong><span>圍坐開飯的味道、長輩手藝、難忘的團圓時光</span><small>開場問句：「細個圍埋食飯，邊個餸最令你記得？」</small></button>
+        <button class="caregiver-topic" data-caregiver-topic="neighbourhood"><strong>舊樓鄰里與童年歲月</strong><span>石硤尾徙置區、走廊乘涼、街坊鄰里人情味</span><small>開場問句：「以前住樓嗰陣，街坊之間係咪好熱鬧？」</small></button>
+        <button id="start-session" class="primary caregiver-start">開始陪伴長者（進入活動中） →</button>
+      </section>
+    </div>`,
+    2: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card live-card">
+        <div class="stage-card-heading"><div><p class="eyebrow">活動中・真人傾談</p><h2>專心望住阿梅婆婆</h2></div><span class="live-indicator">● 進行中</span></div>
+        <p class="muted">AI 只在背景記錄，不會代替你發問。</p>
+        <div class="live-transcript">${state.messages.length ? state.messages.slice(-3).map((message) => `<p><strong>${message.role === "user" ? "阿梅婆婆" : "AI 記錄"}</strong>${escapeHtml(message.text)}</p>`).join("") : `<p><strong>等待對話</strong>你可以由今日已選的題目開始。</p>`}</div>
+        <div class="keyword-row"><span>深水埗 · 地點</span><span>18 歲 · 年份</span><span>裁縫 · 工作</span></div>
+        <button id="open-conversation" class="primary caregiver-start">開啟對話工具 →</button>
+      </section>
+      <section class="caregiver-card followup-card"><p class="eyebrow">AI 幕後提示</p><h2>可以稍後追問</h2><div class="followup-item">「你當時第一日返工，最記得邊一樣嘢？」</div><div class="followup-item">「第一份人工，你有冇買啲嘢俾屋企人？」</div><div class="caregiver-note">如果長者感到疲倦，可以先休息，不需要完成所有問題。</div></section>
+    </div>`,
+    3: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card recap-card"><p class="eyebrow">活動後・手帳</p><h2>把今日對話留低</h2><p class="muted">長者確認後，故事才會交給家人，成為下一次見面的起點。</p><div class="recap-list"><div><strong>今日完成</strong><span>✓ 記錄第一份工作故事</span><span>✓ 找到深水埗與裁縫關鍵詞</span></div><div><strong>下次可以繼續</strong><span>・第一次出糧用來做什麼</span><span>・當年工作的同事和師傅</span></div></div><button id="open-story-profile" class="primary caregiver-start">查看 Story Profile →</button></section>
+      <section class="caregiver-card next-visit-card"><p class="eyebrow">下一次見面</p><h2>留一句接續提示</h2><div class="next-visit-quote">「下次可以問阿梅婆婆：第一份人工有冇買嘢俾屋企人？」</div><p class="muted">這不是 AI 結論，而是給下一位訪問者的溫柔提示。</p><button id="back-to-prep" class="secondary caregiver-start">返回活動前準備</button></section>
+    </div>`,
+  };
   app.innerHTML = `<div class="shell dashboard">
     <header class="topbar">
-      <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
-      <button id="back-to-senior" class="secondary">返回活動頁</button>
+      <div class="brand-lockup"><span class="brand-mark">憶</span><div><span class="brand">憶旅・照顧者工作台</span><small>真人陪伴・AI 幕後支援</small></div></div>
+      <div class="caregiver-top-actions"><span class="resident-chip">阿梅婆婆（82 歲）</span><button id="back-to-senior" class="secondary">切換長者全屏</button><button class="size-button">標準</button><button class="size-button">大字</button><button id="load-demo" class="demo-button">▶ 示範數據</button></div>
     </header>
-    <section class="dashboard-hero">
-      <p class="eyebrow">訪問者工作台・活動前</p>
-      <h1>今日陪阿梅婆婆傾偈</h1>
-      <p>先了解長者，再由真人帶住對話。憶旅只係幕後工具，幫你記低重點同準備下一次話題。</p>
-      <div class="dashboard-actions"><button id="start-session" class="primary">開始今日活動</button><span class="human-badge">真人主導</span></div>
-    </section>
-    <section class="dashboard-panel visitor-profile">
-      <div class="panel-heading"><div><p class="eyebrow">長者背景卡</p><h2>阿梅婆婆</h2></div><span class="step">今日第 3 次</span></div>
-      <div class="profile-grid">
-        <div><small>以前職業</small><strong>裁縫師</strong></div>
-        <div><small>熟悉地方</small><strong>深水埗</strong></div>
-        <div><small>今日狀態</small><strong class="status-good">適合慢慢傾</strong></div>
-      </div>
-      <p class="dashboard-quote">上次提到：「第一次出糧嗰日，我到而家都仲記得。」</p>
-      <p class="dashboard-note">今日可以由「第一份工作」開始，唔需要急住完成一個故事。</p>
-    </section>
-    <section class="dashboard-panel prompt-panel">
-      <div class="panel-heading"><div><p class="eyebrow">今日建議題目</p><h2>由一條問題開始就好</h2></div><span class="ai-label">AI 準備</span></div>
-      <div class="prompt-list">
-        <button class="prompt-item" data-prompt="你第一份工係點樣開始㗎？"><b>1</b><span>你第一份工係點樣開始㗎？</span></button>
-        <button class="prompt-item" data-prompt="第一次出糧嗰日，你用咗嚟做咩？"><b>2</b><span>第一次出糧嗰日，你用咗嚟做咩？</span></button>
-        <button class="prompt-item" data-prompt="當時屋企人點樣支持你？"><b>3</b><span>當時屋企人點樣支持你？</span></button>
-      </div>
-    </section>
-    <section class="dashboard-panel avoid-panel">
-      <div class="panel-heading"><div><p class="eyebrow">溫柔提醒</p><h2>如果對話走到呢度</h2></div><span class="step">先尊重感受</span></div>
-      <div class="avoid-topics"><span>配偶離世</span><span>疾病</span><span>戰亂經歷</span></div>
-      <p class="dashboard-note">以上只係訪問者提示，不是 AI 判斷。長者主動提起時，請由真人決定是否繼續或休息。</p>
-    </section>
-    <section class="status-grid">
-      <article class="status-card"><span class="status-icon">◷</span><small>最近對話</small><strong>今日 10:24</strong><span class="status-good">已完成</span></article>
-      <article class="status-card"><span class="status-icon">♡</span><small>故事進度</small><strong>${storyStatus}</strong><span class="status-good">${state.story?.confirmed ? "可以分享" : "等待審閱"}</span></article>
-      <article class="status-card ${state.paused ? "attention" : ""}"><span class="status-icon">!</span><small>安全狀態</small><strong>${safetyStatus}</strong><span>${state.paused ? "請聯絡長者" : "一切正常"}</span></article>
-    </section>
-    <section class="dashboard-panel">
-      <div class="panel-heading"><div><p class="eyebrow">最近完成</p><h2>阿梅婆婆的故事</h2></div><span class="ai-label">長者已確認</span></div>
-      ${state.story?.confirmed ? `<p class="dashboard-quote">「${escapeHtml(state.story.text.slice(0, 90))}${state.story.text.length > 90 ? "…" : ""}」</p>
-        <div class="dashboard-actions"><button id="dashboard-preview" class="primary">預覽故事</button><button id="dashboard-message" class="secondary">留一句話</button></div>` : `<div class="dashboard-empty">長者完成審閱後，確認嘅故事會顯示喺呢度。</div>`}
-    </section>
-    <section class="dashboard-panel">
-      <div class="panel-heading"><div><p class="eyebrow">回憶資料</p><h2>相片及內容</h2></div><span class="step">${state.photo ? "1 張相片" : "未有相片"}</span></div>
-      ${state.photo ? `<div class="dashboard-memory"><img src="${state.photo.image}" alt="${escapeHtml(state.photo.title || "回憶相片")}" /><div><h3>${escapeHtml(state.photo.title || "未命名回憶")}</h3><p>${escapeHtml(state.photo.caption || "未有補充內容。")}</p><span class="status-good">由長者選擇分享</span></div></div>` : `<div class="dashboard-empty">長者尚未上載相片。</div>`}
-    </section>
+    <nav class="stage-tabs">${[["1","活動前・準備"],["2","活動中・傾談"],["3","活動後・手帳"]].map(([number, label]) => `<button class="${stage === Number(number) ? "active" : ""}" data-caregiver-stage="${number}"><b>${number}</b>${label}</button>`).join("")}</nav>
+    ${stageContent[stage]}
     <p class="dashboard-note">Demo 介面：真實版本會根據長者同意及機構權限顯示資料。</p>
   </div>`;
   document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "senior"; render(); });
-  document.querySelector("#start-session").addEventListener("click", () => {
+  document.querySelectorAll("[data-caregiver-stage]").forEach((button) => button.addEventListener("click", () => {
+    state.workflowStage = Number(button.dataset.caregiverStage);
+    render();
+  }));
+  document.querySelector("#start-session")?.addEventListener("click", () => {
+    state.workflowStage = 2;
+    render();
+  });
+  document.querySelector("#open-conversation")?.addEventListener("click", () => {
     state.view = "senior";
     state.workflowStage = 2;
     render();
     document.querySelector(".conversation")?.scrollIntoView({ behavior: "smooth" });
   });
-  document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelector("#open-story-profile")?.addEventListener("click", () => {
     state.view = "senior";
-    state.workflowStage = 2;
     render();
-    const input = document.querySelector("#manual-input");
-    if (input) {
-      input.value = button.dataset.prompt;
-      input.focus();
-    }
+    document.querySelector(".story-section")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelector("#back-to-prep")?.addEventListener("click", () => { state.workflowStage = 1; render(); });
+  document.querySelector("#load-demo")?.addEventListener("click", () => loadDemo());
+  document.querySelectorAll("[data-caregiver-topic]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-caregiver-topic]").forEach((item) => item.classList.remove("selected"));
+    button.classList.add("selected");
   }));
   document.querySelector("#dashboard-preview")?.addEventListener("click", () => {
     state.view = "senior";
