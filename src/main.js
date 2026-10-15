@@ -349,6 +349,13 @@ function startListening() {
     stopListening();
     return;
   }
+  state.listening = true;
+  state.status = "正在準備語音轉錄；訪問者先開始說話。";
+  startRecognitionSegment();
+  render();
+}
+
+function startRecognitionSegment() {
   state.recognition = new SpeechRecognition();
   state.recognition.lang = "zh-HK";
   state.recognition.interimResults = true;
@@ -356,9 +363,9 @@ function startListening() {
   const speaker = state.speaker;
   state.liveTranscript = "";
   const recognition = state.recognition;
-  state.status = `正在轉錄${speaker === "staff" ? "訪問者" : "長者"}；按停止後加入逐字稿。`;
-  recognition.onstart = () => { state.listening = true; render(); };
-  state.recognition.onresult = (event) => {
+  state.status = `正在轉錄${speaker === "staff" ? "訪問者" : "長者"}；切換說話者不會停止整段錄音。`;
+  recognition.onstart = () => { render(); };
+  recognition.onresult = (event) => {
     state.liveTranscript = Array.from(event.results)
       .map((result) => result[0].transcript)
       .join(" ")
@@ -378,25 +385,31 @@ function startListening() {
       handleTranscript(transcript, speaker);
     }
     if (state.listening && !state.paused) {
-      try {
-        recognition.start();
-      } catch (error) {
-        state.listening = false;
-        state.status = `無法繼續語音轉錄：${error.message}`;
-        render();
-      }
-    } else if (!transcript) {
+      startRecognitionSegment();
+      render();
+    } else if (!transcript && !state.paused) {
       state.status = "未辨識到語音；可以重試或改用文字輸入。";
       render();
     }
   };
   try {
-    state.recognition.start();
-    render();
+    recognition.start();
   } catch (error) {
+    state.listening = false;
     state.status = `無法啟動語音轉錄：${error.message}`;
     render();
   }
+}
+
+function switchSpeaker() {
+  state.speaker = state.speaker === "staff" ? "elderly" : "staff";
+  if (state.listening) {
+    state.status = `正在切換至${state.speaker === "staff" ? "訪問者" : "長者"}；錄音會持續。`;
+    state.recognition?.stop();
+  } else {
+    state.status = `已切換至${state.speaker === "staff" ? "訪問者" : "長者"}。`;
+  }
+  render();
 }
 
 function stopListening() {
@@ -431,11 +444,11 @@ function renderFocusMode() {
       <label class="transcription-consent"><input id="focus-transcription-consent" type="checkbox" ${state.interviewConsent ? "checked" : ""} /> 訪問者及長者同意使用瀏覽器語音轉錄，並將逐字稿傳送至設定的 AI 服務生成建議及摘要；本應用不保存音訊</label>
       ${lastEntry ? `<div class="focus-transcript"><span>${speakerLabel(lastEntry.role)}・最近記錄</span><p>「${escapeHtml(lastEntry.text)}」</p></div>` : ""}
       ${state.listening ? `<div class="live-preview" id="live-preview">${escapeHtml(state.liveTranscript || "聆聽中…")}</div>` : ""}
-      <div class="speaker-picker" aria-label="選擇正在說話的人">
-        <button id="focus-speaker-staff" class="${state.speaker === "staff" ? "selected" : ""}" aria-pressed="${state.speaker === "staff"}" ${state.listening ? "disabled" : ""}>訪問者講緊</button>
-        <button id="focus-speaker-elderly" class="${state.speaker === "elderly" ? "selected" : ""}" aria-pressed="${state.speaker === "elderly"}" ${state.listening ? "disabled" : ""}>長者講緊</button>
+      <div class="speaker-picker" aria-live="polite">
+        <span class="current-speaker">目前說話者：${speakerLabel(state.speaker)}</span>
+        <button id="focus-switch-speaker" type="button">切換至${speakerLabel(state.speaker === "staff" ? "elderly" : "staff")}${state.listening ? "（錄音繼續）" : ""}</button>
       </div>
-      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}" ${state.interviewEnded || state.paused ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止轉錄" : "開始轉錄"}</strong></button>
+      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}" ${state.interviewEnded || state.paused ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止整段錄音" : "開始整段錄音"}</strong></button>
       <div class="focus-actions"><button id="focus-rest" class="secondary">我想休息</button><button id="focus-end" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : state.interviewEnded ? "訪談已結束" : "結束訪談並生成摘要"}</button></div>
       ${storyReady ? `<section class="focus-sharing"><span class="ai-label">長者已確認</span><h2>你的故事準備好喇</h2><p>如果你願意，可以分享俾屋企人睇。</p><button id="focus-share" class="primary">${state.sharing?.enabled ? "分享連結已準備好" : "分享給家人"}</button><small>你可以隨時改變主意。</small></section>` : ""}
       ${state.status ? `<p class="status-message" role="status">${escapeHtml(state.status)}</p>` : ""}
@@ -447,8 +460,7 @@ function renderFocusMode() {
     state.interviewConsent = event.target.checked;
     if (!state.interviewConsent && state.listening) stopListening();
   });
-  document.querySelector("#focus-speaker-staff").addEventListener("click", () => { state.speaker = "staff"; render(); });
-  document.querySelector("#focus-speaker-elderly").addEventListener("click", () => { state.speaker = "elderly"; render(); });
+  document.querySelector("#focus-switch-speaker")?.addEventListener("click", switchSpeaker);
   document.querySelector("#focus-end").addEventListener("click", endInterview);
   document.querySelector("#focus-rest").addEventListener("click", () => alert("好，我哋休息一陣先。準備好再撳咪高風。"));
   document.querySelector("#focus-share")?.addEventListener("click", () => {
@@ -634,13 +646,13 @@ function render() {
         <section class="conversation" aria-live="polite">${messages}</section>
         ${state.listening ? `<div class="live-preview"><strong>即時辨識中・${state.speaker === "staff" ? "訪問者" : "長者"}</strong><p id="live-preview">${escapeHtml(state.liveTranscript || "聆聽中…")}</p></div>` : ""}
         <form id="composer" class="${state.paused || state.interviewEnded ? "disabled" : ""}">
-          <div class="speaker-picker" aria-label="選擇正在說話的人">
-            <button id="speaker-staff" type="button" class="${state.speaker === "staff" ? "selected" : ""}" aria-pressed="${state.speaker === "staff"}" ${state.listening ? "disabled" : ""}>訪問者講緊</button>
-            <button id="speaker-elderly" type="button" class="${state.speaker === "elderly" ? "selected" : ""}" aria-pressed="${state.speaker === "elderly"}" ${state.listening ? "disabled" : ""}>長者講緊</button>
+          <div class="speaker-picker" aria-live="polite">
+            <span class="current-speaker">目前說話者：${state.speaker === "staff" ? "訪問者" : "長者"}</span>
+            <button id="switch-speaker" type="button">切換至${state.speaker === "staff" ? "長者" : "訪問者"}${state.listening ? "（錄音繼續）" : ""}</button>
           </div>
           <div class="composer-row">
             <input id="manual-input" aria-label="輸入訪談內容" placeholder="${state.speaker === "staff" ? "輸入訪問者說的內容…" : "輸入長者說的內容…"}" ${state.paused || state.interviewEnded ? "disabled" : ""} />
-            <button class="mic ${state.listening ? "active" : ""}" type="button" id="listen" aria-label="開始粵語語音轉錄" ${state.paused || state.interviewEnded ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><small>${state.listening ? "停止轉錄" : "開始轉錄"}</small></button>
+            <button class="mic ${state.listening ? "active" : ""}" type="button" id="listen" aria-label="${state.listening ? "停止整段錄音" : "開始整段錄音"}" ${state.paused || state.interviewEnded ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><small>${state.listening ? "停止整段錄音" : "開始整段錄音"}</small></button>
             <button class="send" type="submit" ${state.paused || state.interviewEnded || state.listening ? "disabled" : ""}>加入逐字稿</button>
           </div>
         </form>
@@ -755,8 +767,7 @@ function render() {
     state.interviewConsent = event.target.checked;
     if (!state.interviewConsent && state.listening) stopListening();
   });
-  document.querySelector("#speaker-staff").addEventListener("click", () => { state.speaker = "staff"; render(); });
-  document.querySelector("#speaker-elderly").addEventListener("click", () => { state.speaker = "elderly"; render(); });
+  document.querySelector("#switch-speaker")?.addEventListener("click", switchSpeaker);
   document.querySelector("#suggest-questions").addEventListener("click", generateSuggestions);
   document.querySelector("#end-interview").addEventListener("click", endInterview);
   document.querySelectorAll("[data-workflow-stage]").forEach((button) => button.addEventListener("click", () => {
