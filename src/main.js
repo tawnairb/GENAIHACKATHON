@@ -14,13 +14,13 @@ const state = {
   photo: JSON.parse(localStorage.getItem(PHOTO_KEY) || "null"),
   story: JSON.parse(localStorage.getItem(STORY_KEY) || "null"),
   sharing: JSON.parse(localStorage.getItem(SHARE_KEY) || "null"),
-  view: "interview",
+  view: "caregiver",
   topic: localStorage.getItem("yiloi-topic-v1") || "",
   focusMode: false,
   workflowStage: 1,
   listening: false,
   paused: false,
-  speaker: "elderly",
+  speaker: "staff",
   interviewConsent: false,
   liveTranscript: "",
   status: "",
@@ -175,6 +175,15 @@ function selectTopic(id) {
   render();
 }
 
+function getStoryProfile() {
+  return state.story?.profile || {
+    people: state.photo?.people || "婆婆、屋企人",
+    place: state.photo?.title?.includes("深水埗") ? "深水埗" : "待長者補充",
+    year: state.photo?.year || "待長者補充",
+    quote: state.story?.text?.split("。")[0] || "待長者選出原句",
+  };
+}
+
 function loadDemo() {
   state.messages = [
     { role: "staff", text: "你細個住喺邊度？有冇一段特別記得嘅日常生活？", at: new Date().toISOString() },
@@ -182,6 +191,15 @@ function loadDemo() {
     { role: "staff", text: "婆婆最常煮咩餸？", at: new Date().toISOString() },
     { role: "elderly", text: "佢最叻煮梅菜扣肉，屋企人返工返學都會一齊食。", at: new Date().toISOString() },
   ];
+  state.photo = {
+    image: createDemoImage(),
+    title: "婆婆煮梅菜扣肉的廚房",
+    year: "1968",
+    people: "婆婆、屋企人",
+    caption: "婆婆最叻煮梅菜扣肉，屋企人返工返學都會一齊食。",
+    confirmed: true,
+  };
+  state.sharing = null;
   state.story = null;
   state.suggestions = [];
   state.interviewEnded = false;
@@ -287,12 +305,25 @@ async function endInterview() {
       },
       { role: "user", content: `請根據以下人與人訪談逐字稿整理摘要：\n${transcriptForAi()}` },
     ]);
-    state.story = { title: "訪談摘要（待核對）", text: summary, confirmed: false };
+    state.story = {
+      title: "訪談摘要（待核對）",
+      text: summary,
+      confirmed: false,
+      profileConfirmed: false,
+      profile: {
+        people: state.photo?.people || "待長者補充",
+        place: state.photo?.title?.includes("深水埗") ? "深水埗" : "待長者補充",
+        year: state.photo?.year || "待長者補充",
+        quote: summary.split("。")[0] || "待長者選出原句",
+      },
+      sharePermissions: { story: true, quote: false, photo: false, details: false },
+    };
     saveStory();
     state.interviewEnded = true;
     localStorage.setItem(INTERVIEW_ENDED_KEY, "true");
     state.status = "摘要已生成並儲存。請與長者一起核對後再確認或分享。";
     state.focusMode = false;
+    state.workflowStage = 3;
   } catch (error) {
     console.error("Could not summarize interview", error);
     state.status = `未能生成摘要：${error.message}`;
@@ -385,11 +416,12 @@ function stopListening() {
 function renderFocusMode() {
   const lastEntry = state.messages[state.messages.length - 1];
   const speakerLabel = (speaker) => speaker === "staff" ? "訪問者" : "長者";
+  const storyReady = state.story?.confirmed && state.story.profileConfirmed !== false;
   app.innerHTML = `<div class="focus-shell">
     <header class="focus-topbar">
-      <button id="exit-focus" class="focus-back">← 返回完整畫面</button>
+      <button id="exit-focus" class="focus-back">← 返回照顧者工作台</button>
       <span class="brand"><span class="brand-mark">憶</span>憶旅</span>
-      <span class="focus-time">本節 ${Math.floor((Date.now() - state.startedAt) / 60000)} / 45 分鐘</span>
+      <span class="focus-time">長者模式</span>
     </header>
     <main class="focus-main">
       <p class="eyebrow">${state.topic ? `訪談主題：${escapeHtml(memoryTopics.find(([id]) => id === state.topic)?.[1] || "")}` : "訪問者與長者面對面對話"}</p>
@@ -404,7 +436,8 @@ function renderFocusMode() {
         <button id="focus-speaker-elderly" class="${state.speaker === "elderly" ? "selected" : ""}" aria-pressed="${state.speaker === "elderly"}" ${state.listening ? "disabled" : ""}>長者講緊</button>
       </div>
       <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}" ${state.interviewEnded || state.paused ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止轉錄" : "開始轉錄"}</strong></button>
-      <div class="focus-actions"><button id="focus-end" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : "結束訪談並生成摘要"}</button></div>
+      <div class="focus-actions"><button id="focus-rest" class="secondary">我想休息</button><button id="focus-end" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : state.interviewEnded ? "訪談已結束" : "結束訪談並生成摘要"}</button></div>
+      ${storyReady ? `<section class="focus-sharing"><span class="ai-label">長者已確認</span><h2>你的故事準備好喇</h2><p>如果你願意，可以分享俾屋企人睇。</p><button id="focus-share" class="primary">${state.sharing?.enabled ? "分享連結已準備好" : "分享給家人"}</button><small>你可以隨時改變主意。</small></section>` : ""}
       ${state.status ? `<p class="status-message" role="status">${escapeHtml(state.status)}</p>` : ""}
     </main>
   </div>`;
@@ -417,6 +450,17 @@ function renderFocusMode() {
   document.querySelector("#focus-speaker-staff").addEventListener("click", () => { state.speaker = "staff"; render(); });
   document.querySelector("#focus-speaker-elderly").addEventListener("click", () => { state.speaker = "elderly"; render(); });
   document.querySelector("#focus-end").addEventListener("click", endInterview);
+  document.querySelector("#focus-rest").addEventListener("click", () => alert("好，我哋休息一陣先。準備好再撳咪高風。"));
+  document.querySelector("#focus-share")?.addEventListener("click", () => {
+    if (!state.sharing?.enabled) {
+      state.sharing = {
+        enabled: true,
+        url: `${window.location.origin}${window.location.pathname}?story=demo-${Date.now()}`,
+      };
+      saveSharing();
+    }
+    renderFocusMode();
+  });
 }
 
 function renderWorkflow() {
@@ -447,35 +491,79 @@ function renderWorkflow() {
 }
 
 function renderCaregiverDashboard() {
-  const storyStatus = state.story?.confirmed ? "已確認" : state.story ? "待長者確認" : "未開始";
-  const safetyStatus = state.paused ? "需要即時關注" : "目前沒有通知";
+  const stage = state.workflowStage;
+  const stageContent = {
+    1: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card profile-card">
+        <p class="eyebrow">長者備忘卡</p><h2>阿梅婆婆</h2>
+        <p class="muted">深水埗 / 石硤尾 · 成長背景速讀</p>
+        <div class="caregiver-divider"></div>
+        <small>成長經歷</small><p>成長於石硤尾，18 歲起於深水埗製衣廠工作逾 20 年；性格爽朗好客，最拿手煮梅菜扣肉。</p>
+        <small>溝通與健康提示</small><p>右耳聽力稍弱，對話時需正面面向長者，語速放慢。</p>
+        <div class="caregiver-alert"><strong>⚠ 避開話題提醒</strong><span>避免主動問及丈夫數年前因病離世細節；若長者感傷，以溫和傾聽與適當為主。</span></div>
+      </section>
+      <section class="caregiver-card topic-card-panel">
+        <p class="eyebrow">今日破冰題目</p><h2>選擇交談切入點</h2>
+        <p class="muted">選取一個容易喚起愉快記憶的生活話題：</p>
+        <button class="caregiver-topic selected" data-caregiver-topic="work"><strong>第一份工・車衣廠歲月</strong><span>年輕時的自豪感、師傅經歷、出第一份糧的滋味</span><small>開場問句：「阿梅婆婆，你仲記唔記得 18 歲嗰陣第一份工係做咩？」</small><b>✓ 今日已選</b></button>
+        <button class="caregiver-topic" data-caregiver-topic="food"><strong>一餐飯與最重要的人</strong><span>圍坐開飯的味道、長輩手藝、難忘的團圓時光</span><small>開場問句：「細個圍埋食飯，邊個餸最令你記得？」</small></button>
+        <button class="caregiver-topic" data-caregiver-topic="neighbourhood"><strong>舊樓鄰里與童年歲月</strong><span>石硤尾徙置區、走廊乘涼、街坊鄰里人情味</span><small>開場問句：「以前住樓嗰陣，街坊之間係咪好熱鬧？」</small></button>
+        <button id="start-session" class="primary caregiver-start">開始陪伴長者（進入活動中） →</button>
+      </section>
+    </div>`,
+    2: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card live-card">
+        <div class="stage-card-heading"><div><p class="eyebrow">活動中・真人傾談</p><h2>專心望住阿梅婆婆</h2></div><span class="live-indicator">● 進行中</span></div>
+        <p class="muted">AI 只在背景記錄，不會代替你發問。</p>
+        <div class="live-transcript">${state.messages.length ? state.messages.slice(-3).map((message) => `<p><strong>${message.role === "elderly" ? "阿梅婆婆" : "訪問者"}</strong>${escapeHtml(message.text)}</p>`).join("") : `<p><strong>等待對話</strong>你可以由今日已選的題目開始。</p>`}</div>
+        <div class="keyword-row"><span>深水埗 · 地點</span><span>18 歲 · 年份</span><span>裁縫 · 工作</span></div>
+        <button id="open-conversation" class="primary caregiver-start">開啟對話工具 →</button>
+      </section>
+      <section class="caregiver-card followup-card"><p class="eyebrow">AI 幕後提示</p><h2>可以稍後追問</h2><div class="followup-item">「你當時第一日返工，最記得邊一樣嘢？」</div><div class="followup-item">「第一份人工，你有冇買啲嘢俾屋企人？」</div><div class="caregiver-note">如果長者感到疲倦，可以先休息，不需要完成所有問題。</div></section>
+    </div>`,
+    3: `<div class="caregiver-stage-grid">
+      <section class="caregiver-card recap-card"><p class="eyebrow">活動後・手帳</p><h2>把今日對話留低</h2><p class="muted">長者確認後，故事才會交給家人，成為下一次見面的起點。</p><div class="recap-list"><div><strong>今日完成</strong><span>✓ 記錄第一份工作故事</span><span>✓ 找到深水埗與裁縫關鍵詞</span></div><div><strong>下次可以繼續</strong><span>・第一次出糧用來做什麼</span><span>・當年工作的同事和師傅</span></div></div><button id="open-story-profile" class="primary caregiver-start">查看 Story Profile →</button></section>
+      <section class="caregiver-card next-visit-card"><p class="eyebrow">下一次見面</p><h2>留一句接續提示</h2><div class="next-visit-quote">「下次可以問阿梅婆婆：第一份人工有冇買嘢俾屋企人？」</div><p class="muted">這不是 AI 結論，而是給下一位訪問者的溫柔提示。</p><button id="back-to-prep" class="secondary caregiver-start">返回活動前準備</button></section>
+    </div>`,
+  };
   app.innerHTML = `<div class="shell dashboard">
     <header class="topbar">
-      <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
-      <button id="back-to-senior" class="secondary">返回訪談工作區</button>
+      <div class="brand-lockup"><span class="brand-mark">憶</span><div><span class="brand">憶旅・照顧者工作台</span><small>真人陪伴・AI 幕後支援</small></div></div>
+      <div class="caregiver-top-actions"><span class="resident-chip">阿梅婆婆（82 歲）</span><button id="back-to-senior" class="secondary">切換長者全屏</button><button class="size-button">標準</button><button class="size-button">大字</button><button id="load-demo" class="demo-button">▶ 示範數據</button></div>
     </header>
-    <section class="dashboard-hero">
-      <p class="eyebrow">工作人員視角・Demo</p>
-      <h1>訪談摘要與長者回憶</h1>
-      <p>以下只顯示工作人員與長者共同核對並確認的摘要內容。</p>
-    </section>
-    <section class="status-grid">
-      <article class="status-card"><span class="status-icon">◷</span><small>最近對話</small><strong>今日 10:24</strong><span class="status-good">已完成</span></article>
-      <article class="status-card"><span class="status-icon">♡</span><small>摘要進度</small><strong>${storyStatus}</strong><span class="status-good">${state.story?.confirmed ? "可以分享" : "等待核對"}</span></article>
-      <article class="status-card ${state.paused ? "attention" : ""}"><span class="status-icon">!</span><small>安全狀態</small><strong>${safetyStatus}</strong><span>${state.paused ? "請聯絡長者" : "一切正常"}</span></article>
-    </section>
-    <section class="dashboard-panel">
-      <div class="panel-heading"><div><p class="eyebrow">訪談後摘要</p><h2>長者回憶摘要</h2></div><span class="ai-label">長者已確認</span></div>
-      ${state.story?.confirmed ? `<p class="dashboard-quote">「${escapeHtml(state.story.text.slice(0, 90))}${state.story.text.length > 90 ? "…" : ""}」</p>
-        <div class="dashboard-actions"><button id="dashboard-preview" class="primary">預覽故事</button><button id="dashboard-message" class="secondary">留一句話</button></div>` : `<div class="dashboard-empty">長者完成審閱後，確認嘅故事會顯示喺呢度。</div>`}
-    </section>
-    <section class="dashboard-panel">
-      <div class="panel-heading"><div><p class="eyebrow">回憶資料</p><h2>相片及內容</h2></div><span class="step">${state.photo ? "1 張相片" : "未有相片"}</span></div>
-      ${state.photo ? `<div class="dashboard-memory"><img src="${state.photo.image}" alt="${escapeHtml(state.photo.title || "回憶相片")}" /><div><h3>${escapeHtml(state.photo.title || "未命名回憶")}</h3><p>${escapeHtml(state.photo.caption || "未有補充內容。")}</p><span class="status-good">由長者選擇分享</span></div></div>` : `<div class="dashboard-empty">長者尚未上載相片。</div>`}
-    </section>
-    <p class="dashboard-note">Demo 介面：摘要及逐字稿目前只儲存在此瀏覽器，不會同步到機構系統。</p>
+    <nav class="stage-tabs">${[["1","活動前・準備"],["2","活動中・傾談"],["3","活動後・手帳"]].map(([number, label]) => `<button class="${stage === Number(number) ? "active" : ""}" data-caregiver-stage="${number}"><b>${number}</b>${label}</button>`).join("")}</nav>
+    ${stageContent[stage]}
+    <p class="dashboard-note">Demo 介面：真實版本會根據長者同意及機構權限顯示資料。</p>
   </div>`;
-  document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "interview"; render(); });
+  document.querySelector("#back-to-senior").addEventListener("click", () => {
+    state.focusMode = true;
+    render();
+  });
+  document.querySelectorAll("[data-caregiver-stage]").forEach((button) => button.addEventListener("click", () => {
+    state.workflowStage = Number(button.dataset.caregiverStage);
+    render();
+  }));
+  document.querySelector("#start-session")?.addEventListener("click", () => {
+    state.workflowStage = 2;
+    render();
+  });
+  document.querySelector("#open-conversation")?.addEventListener("click", () => {
+    state.view = "senior";
+    state.workflowStage = 2;
+    render();
+    document.querySelector(".conversation")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelector("#open-story-profile")?.addEventListener("click", () => {
+    state.view = "senior";
+    render();
+    document.querySelector(".story-section")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelector("#back-to-prep")?.addEventListener("click", () => { state.workflowStage = 1; render(); });
+  document.querySelector("#load-demo")?.addEventListener("click", () => loadDemo());
+  document.querySelectorAll("[data-caregiver-topic]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-caregiver-topic]").forEach((item) => item.classList.remove("selected"));
+    button.classList.add("selected");
+  }));
   document.querySelector("#dashboard-preview")?.addEventListener("click", () => {
     state.view = "interview";
     render();
@@ -495,6 +583,7 @@ function render() {
   }
   const elapsed = Math.floor((Date.now() - state.startedAt) / 60000);
   const selectedTopic = memoryTopics.find(([id]) => id === state.topic);
+  const storyReady = state.story?.confirmed && state.story.profileConfirmed !== false;
   const messages = state.messages.length
     ? state.messages.map((message) => `<article class="message ${message.role}">
         <span class="role">${message.role === "staff" ? "訪問者" : "長者"}</span>
@@ -507,9 +596,9 @@ function render() {
       <header class="topbar">
         <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
         <div class="top-actions">
-          <button id="load-demo" class="demo-button">▶ 載入示範逐字稿</button>
-          <button id="caregiver-view" class="dashboard-button">工作人員模式</button>
-          <button id="focus-view" class="focus-button">全屏訪談</button>
+          <button id="load-demo" class="demo-button">▶ Demo 示範</button>
+          <button id="caregiver-view" class="dashboard-button">訪問者工作台</button>
+          <button id="focus-view" class="focus-button">全屏傾偈</button>
           <span class="timer">本節 ${elapsed} / 45 分鐘</span>
         </div>
       </header>
@@ -574,14 +663,19 @@ function render() {
           <button id="end-interview" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : state.interviewEnded ? "訪談已結束" : "結束訪談並生成摘要"}</button>
         </div>
         ${state.story ? `<article class="story-review">
-          <span class="ai-label">AI 摘要・${state.story.confirmed ? "已確認" : "待核對"}</span>
-          <h3>${escapeHtml(state.story.title || "訪談摘要")}</h3>
-          <p class="review-help">摘要只根據逐字稿整理，不代表事實已核實。請工作人員與長者一起核對及修改。</p>
-          <textarea id="story-editor" rows="7" aria-label="訪談摘要">${escapeHtml(state.story.text)}</textarea>
-          <div class="review-actions">
-            <button id="save-story-draft" class="secondary">儲存摘要修改</button>
-            ${state.story.confirmed ? `<div class="confirmed">✓ 已確認摘要</div>` : `<button id="confirm-story-text" class="primary">長者確認摘要</button>`}
+          <span class="ai-label">AI 整理・${storyReady ? "已確認" : "尚未確認"}</span>
+          <h3>${escapeHtml(state.story.title || "我的回憶")}</h3>
+          <p class="review-help">以下內容只係草稿。你可以直接修改，確認後先會加入故事書。</p>
+          <div class="profile-heading"><div><p class="eyebrow">Story Profile</p><strong>長者可以逐項確認嘅資料</strong></div><span class="step">${storyReady ? "已確認" : "待確認"}</span></div>
+          <div class="profile-fields">
+            ${Object.entries({ people: "人物", place: "地點", year: "年份", quote: "長者原句" }).map(([key, label]) => `<label class="profile-field"><input type="checkbox" data-profile="${key}" ${storyReady ? "checked" : ""} /><span><small>${label}</small><strong>${escapeHtml(getStoryProfile()[key])}</strong></span></label>`).join("")}
           </div>
+          <textarea id="story-editor" rows="7" aria-label="故事內容">${escapeHtml(state.story.text)}</textarea>
+          <div class="review-actions">
+            <button id="save-story-draft" class="secondary">儲存修改</button>
+            ${storyReady ? `<div class="confirmed">✓ 已加入故事書</div>` : `<button id="confirm-story-text" class="primary">確認 Story Profile 及故事</button>`}
+          </div>
+          <p class="review-help profile-disclaimer">AI 只係整理內容，未經長者逐項確認前，不會加入故事書或分享。</p>
         </article>` : `<div class="story-empty">
           <p>結束訪談後，AI 會整理長者說過的內容；摘要會先供工作人員和長者核對。</p>
         </div>`}
@@ -594,7 +688,7 @@ function render() {
           </div>
           <span class="step">私隱由你決定</span>
         </div>
-        ${state.story?.confirmed ? `<p class="share-help">只有已確認嘅故事先可以分享。家人掃描 QR code，就可以睇故事同留言。</p>
+        ${storyReady ? `<p class="share-help">只有已確認嘅故事先可以分享。家人掃描 QR code，就可以睇故事同留言。</p>
           <div class="share-controls">
             <label class="consent-toggle"><input id="sharing-consent" type="checkbox" ${state.sharing?.enabled ? "checked" : ""} /> 我同意分享呢段故事</label>
             <button id="create-share" class="primary" ${state.sharing?.enabled ? "" : "disabled"}>產生分享 QR Code</button>
@@ -776,6 +870,24 @@ function render() {
     };
     reader.readAsDataURL(file);
   });
+  document.querySelector("#create-story")?.addEventListener("click", () => {
+    const text = draftStory();
+    state.story = {
+      title: state.photo?.title || "我記得嘅一段日子",
+      text,
+      confirmed: false,
+      profileConfirmed: false,
+      profile: {
+        people: state.photo?.people || "待長者補充",
+        place: state.photo?.title?.includes("深水埗") ? "深水埗" : "待長者補充",
+        year: state.photo?.year || "待長者補充",
+        quote: text.split("。")[0] || "待長者選出原句",
+      },
+      sharePermissions: { story: true, quote: false, photo: false, details: false },
+    };
+    saveStory();
+    render();
+  });
   document.querySelector("#save-story-draft")?.addEventListener("click", () => {
     state.story.text = document.querySelector("#story-editor").value.trim();
     state.story.confirmed = false;
@@ -788,8 +900,15 @@ function render() {
       alert("請先寫一點故事內容。");
       return;
     }
+    const profileChecks = [...document.querySelectorAll("[data-profile]")];
+    if (profileChecks.some((checkbox) => !checkbox.checked)) {
+      alert("請先逐項確認人物、地點、年份同原句。");
+      return;
+    }
     state.story.text = text;
     state.story.confirmed = true;
+    state.story.profileConfirmed = true;
+    state.story.profile = getStoryProfile();
     saveStory();
     render();
   });
