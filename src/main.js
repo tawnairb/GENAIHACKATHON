@@ -276,30 +276,38 @@ function startListening() {
 }
 
 function renderFocusMode() {
-  const lastAgent = [...state.messages].reverse().find((message) => message.role === "agent");
-  const lastUser = [...state.messages].reverse().find((message) => message.role === "user");
+  const storyReady = state.story?.confirmed && state.story.profileConfirmed !== false;
   app.innerHTML = `<div class="focus-shell">
     <header class="focus-topbar">
-      <button id="exit-focus" class="focus-back">← 返回完整畫面</button>
+      <button id="exit-focus" class="focus-back">← 返回照顧者工作台</button>
       <span class="brand"><span class="brand-mark">憶</span>憶旅</span>
-      <span class="focus-time">本節 ${Math.floor((Date.now() - state.startedAt) / 60000)} / 45 分鐘</span>
+      <span class="focus-time">長者模式</span>
     </header>
     <main class="focus-main">
-      <p class="eyebrow">${state.topic ? `主題：${escapeHtml(memoryTopics.find(([id]) => id === state.topic)?.[1] || "")}` : "廣東話語音對話"}</p>
+      <p class="eyebrow">阿梅婆婆・今日陪伴</p>
       <div class="focus-orb ${state.listening ? "is-listening" : ""}"><span>${state.listening ? "■" : "🎙"}</span></div>
-      <h1>${state.listening ? "我聽緊你講…" : "可以同我講嘢喇"}</h1>
-      <p class="focus-hint">${state.listening ? "講完之後，我會耐心聽你講完。" : "撳住下面個咪高風，慢慢講就得。"}</p>
-      ${lastUser ? `<div class="focus-transcript"><span>你剛才講：</span><p>「${escapeHtml(lastUser.text)}」</p></div>` : ""}
-      ${lastAgent ? `<div class="focus-agent"><span>憶旅</span><p>${escapeHtml(lastAgent.text)}</p><button id="focus-speak" class="speak-button">🔊 再讀一次</button></div>` : ""}
-      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}"><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止聆聽" : "按一下開始講"}</strong></button>
-      <div class="focus-actions"><button id="focus-rest" class="secondary">休息一陣</button><button id="focus-end" class="text-button">結束今次對話</button></div>
+      <h1>${state.listening ? "我聽緊你講…" : "阿梅婆婆，慢慢講就得"}</h1>
+      <p class="focus-hint">${state.listening ? "講完之後，照顧者會陪住你。" : "照顧者喺身邊，你可以講自己想講嘅事。"}</p>
+      <p class="focus-topic">${state.topic ? `今日由「${escapeHtml(memoryTopics.find(([id]) => id === state.topic)?.[1] || "")}」開始` : "今日想講邊段回憶都可以"}</p>
+      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}"><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止" : "按一下開始講"}</strong></button>
+      <div class="focus-actions"><button id="focus-rest" class="secondary">我想休息</button><button id="focus-end" class="text-button">完成今日傾談</button></div>
+      ${storyReady ? `<section class="focus-sharing"><span class="ai-label">長者已確認</span><h2>你的故事準備好喇</h2><p>如果你願意，可以分享俾屋企人睇。</p><button id="focus-share" class="primary">${state.sharing?.enabled ? "分享連結已準備好" : "分享給家人"}</button><small>你可以隨時改變主意。</small></section>` : ""}
     </main>
   </div>`;
   document.querySelector("#exit-focus").addEventListener("click", () => { state.focusMode = false; render(); });
   document.querySelector("#focus-listen").addEventListener("click", startListening);
-  document.querySelector("#focus-speak").addEventListener("click", () => speak(lastAgent?.text || ""));
   document.querySelector("#focus-rest").addEventListener("click", () => alert("好，我哋休息一陣先。準備好再撳咪高風。"));
-  document.querySelector("#focus-end").addEventListener("click", () => { state.focusMode = false; render(); });
+  document.querySelector("#focus-end").addEventListener("click", () => { state.focusMode = false; state.view = "caregiver"; state.workflowStage = 3; render(); });
+  document.querySelector("#focus-share")?.addEventListener("click", () => {
+    if (!state.sharing?.enabled) {
+      state.sharing = {
+        enabled: true,
+        url: `${window.location.origin}${window.location.pathname}?story=demo-${Date.now()}`,
+      };
+      saveSharing();
+    }
+    renderFocusMode();
+  });
 }
 
 function renderWorkflow() {
@@ -376,7 +384,10 @@ function renderCaregiverDashboard() {
     ${stageContent[stage]}
     <p class="dashboard-note">Demo 介面：真實版本會根據長者同意及機構權限顯示資料。</p>
   </div>`;
-  document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "senior"; render(); });
+  document.querySelector("#back-to-senior").addEventListener("click", () => {
+    state.focusMode = true;
+    render();
+  });
   document.querySelectorAll("[data-caregiver-stage]").forEach((button) => button.addEventListener("click", () => {
     state.workflowStage = Number(button.dataset.caregiverStage);
     render();
