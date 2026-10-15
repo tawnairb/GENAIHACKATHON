@@ -149,6 +149,15 @@ function draftStory() {
   return userMessages.map((message) => message.text).join(" ");
 }
 
+function getStoryProfile() {
+  return state.story?.profile || {
+    people: state.photo?.people || "婆婆、屋企人",
+    place: state.photo?.title?.includes("深水埗") ? "深水埗" : "待長者補充",
+    year: state.photo?.year || "待長者補充",
+    quote: state.story?.text?.split("。")[0] || "待長者選出原句",
+  };
+}
+
 function loadDemo() {
   state.messages = [
     { role: "agent", text: "你好，我係憶旅，一個 AI 回憶助手，唔係真人。我唔會問你銀行資料、身份證號碼或者地址。今日食咗飯未？", at: new Date().toISOString() },
@@ -170,6 +179,9 @@ function loadDemo() {
     title: "深水埗的飯香",
     text: "我細個住喺深水埗，最鍾意記得婆婆煮飯。佢最叻煮梅菜扣肉，屋企人返工返學都會一齊食。對我嚟講，呢個唔只係一道餸，而係一家人坐埋一齊嘅日子。",
     confirmed: true,
+    profileConfirmed: true,
+    profile: { people: "婆婆、屋企人", place: "深水埗", year: "1968", quote: "我細個住喺深水埗，最鍾意記得婆婆煮飯。" },
+    sharePermissions: { story: true, quote: true, photo: true, details: false },
   };
   save();
   savePhoto();
@@ -323,12 +335,36 @@ function renderCaregiverDashboard() {
   app.innerHTML = `<div class="shell dashboard">
     <header class="topbar">
       <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
-      <button id="back-to-senior" class="secondary">返回長者模式</button>
+      <button id="back-to-senior" class="secondary">返回活動頁</button>
     </header>
     <section class="dashboard-hero">
-      <p class="eyebrow">照顧者視角・Demo</p>
-      <h1>早晨，陳姑娘</h1>
-      <p>以下係阿梅婆婆主動同憶旅分享嘅內容。只顯示已獲同意嘅摘要。</p>
+      <p class="eyebrow">訪問者工作台・活動前</p>
+      <h1>今日陪阿梅婆婆傾偈</h1>
+      <p>先了解長者，再由真人帶住對話。憶旅只係幕後工具，幫你記低重點同準備下一次話題。</p>
+      <div class="dashboard-actions"><button id="start-session" class="primary">開始今日活動</button><span class="human-badge">真人主導</span></div>
+    </section>
+    <section class="dashboard-panel visitor-profile">
+      <div class="panel-heading"><div><p class="eyebrow">長者背景卡</p><h2>阿梅婆婆</h2></div><span class="step">今日第 3 次</span></div>
+      <div class="profile-grid">
+        <div><small>以前職業</small><strong>裁縫師</strong></div>
+        <div><small>熟悉地方</small><strong>深水埗</strong></div>
+        <div><small>今日狀態</small><strong class="status-good">適合慢慢傾</strong></div>
+      </div>
+      <p class="dashboard-quote">上次提到：「第一次出糧嗰日，我到而家都仲記得。」</p>
+      <p class="dashboard-note">今日可以由「第一份工作」開始，唔需要急住完成一個故事。</p>
+    </section>
+    <section class="dashboard-panel prompt-panel">
+      <div class="panel-heading"><div><p class="eyebrow">今日建議題目</p><h2>由一條問題開始就好</h2></div><span class="ai-label">AI 準備</span></div>
+      <div class="prompt-list">
+        <button class="prompt-item" data-prompt="你第一份工係點樣開始㗎？"><b>1</b><span>你第一份工係點樣開始㗎？</span></button>
+        <button class="prompt-item" data-prompt="第一次出糧嗰日，你用咗嚟做咩？"><b>2</b><span>第一次出糧嗰日，你用咗嚟做咩？</span></button>
+        <button class="prompt-item" data-prompt="當時屋企人點樣支持你？"><b>3</b><span>當時屋企人點樣支持你？</span></button>
+      </div>
+    </section>
+    <section class="dashboard-panel avoid-panel">
+      <div class="panel-heading"><div><p class="eyebrow">溫柔提醒</p><h2>如果對話走到呢度</h2></div><span class="step">先尊重感受</span></div>
+      <div class="avoid-topics"><span>配偶離世</span><span>疾病</span><span>戰亂經歷</span></div>
+      <p class="dashboard-note">以上只係訪問者提示，不是 AI 判斷。長者主動提起時，請由真人決定是否繼續或休息。</p>
     </section>
     <section class="status-grid">
       <article class="status-card"><span class="status-icon">◷</span><small>最近對話</small><strong>今日 10:24</strong><span class="status-good">已完成</span></article>
@@ -347,6 +383,22 @@ function renderCaregiverDashboard() {
     <p class="dashboard-note">Demo 介面：真實版本會根據長者同意及機構權限顯示資料。</p>
   </div>`;
   document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "senior"; render(); });
+  document.querySelector("#start-session").addEventListener("click", () => {
+    state.view = "senior";
+    state.workflowStage = 2;
+    render();
+    document.querySelector(".conversation")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => {
+    state.view = "senior";
+    state.workflowStage = 2;
+    render();
+    const input = document.querySelector("#manual-input");
+    if (input) {
+      input.value = button.dataset.prompt;
+      input.focus();
+    }
+  }));
   document.querySelector("#dashboard-preview")?.addEventListener("click", () => {
     state.view = "senior";
     render();
@@ -366,6 +418,7 @@ function render() {
   }
   const elapsed = Math.floor((Date.now() - state.startedAt) / 60000);
   const selectedTopic = memoryTopics.find(([id]) => id === state.topic);
+  const storyReady = state.story?.confirmed && state.story.profileConfirmed !== false;
   const messages = state.messages.length
     ? state.messages.map((message) => `<article class="message ${message.role}">
         <span class="role">${message.role === "agent" ? "憶旅" : "我"}</span>
@@ -380,7 +433,7 @@ function render() {
         <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
         <div class="top-actions">
           <button id="load-demo" class="demo-button">▶ Demo 示範</button>
-          <button id="caregiver-view" class="dashboard-button">照顧者模式</button>
+          <button id="caregiver-view" class="dashboard-button">訪問者工作台</button>
           <button id="focus-view" class="focus-button">全屏傾偈</button>
           <span class="timer">本節 ${elapsed} / 45 分鐘</span>
         </div>
@@ -418,14 +471,19 @@ function render() {
           <span class="step">需要確認</span>
         </div>
         ${state.story ? `<article class="story-review">
-          <span class="ai-label">AI 整理・${state.story.confirmed ? "已確認" : "尚未確認"}</span>
+          <span class="ai-label">AI 整理・${storyReady ? "已確認" : "尚未確認"}</span>
           <h3>${escapeHtml(state.story.title || "我的回憶")}</h3>
           <p class="review-help">以下內容只係草稿。你可以直接修改，確認後先會加入故事書。</p>
+          <div class="profile-heading"><div><p class="eyebrow">Story Profile</p><strong>長者可以逐項確認嘅資料</strong></div><span class="step">${storyReady ? "已確認" : "待確認"}</span></div>
+          <div class="profile-fields">
+            ${Object.entries({ people: "人物", place: "地點", year: "年份", quote: "長者原句" }).map(([key, label]) => `<label class="profile-field"><input type="checkbox" data-profile="${key}" ${storyReady ? "checked" : ""} /><span><small>${label}</small><strong>${escapeHtml(getStoryProfile()[key])}</strong></span></label>`).join("")}
+          </div>
           <textarea id="story-editor" rows="7" aria-label="故事內容">${escapeHtml(state.story.text)}</textarea>
           <div class="review-actions">
             <button id="save-story-draft" class="secondary">儲存修改</button>
-            ${state.story.confirmed ? `<div class="confirmed">✓ 已加入故事書</div>` : `<button id="confirm-story-text" class="primary">我確認呢段故事</button>`}
+            ${storyReady ? `<div class="confirmed">✓ 已加入故事書</div>` : `<button id="confirm-story-text" class="primary">確認 Story Profile 及故事</button>`}
           </div>
+          <p class="review-help profile-disclaimer">AI 只係整理內容，未經長者逐項確認前，不會加入故事書或分享。</p>
         </article>` : `<div class="story-empty">
           <p>對話後，憶旅會將你講過嘅內容整理成草稿。</p>
           <button id="create-story" class="primary" ${draftStory() ? "" : "disabled"}>整理對話成故事草稿</button>
@@ -439,7 +497,7 @@ function render() {
           </div>
           <span class="step">私隱由你決定</span>
         </div>
-        ${state.story?.confirmed ? `<p class="share-help">只有已確認嘅故事先可以分享。家人掃描 QR code，就可以睇故事同留言。</p>
+        ${storyReady ? `<p class="share-help">只有已確認嘅故事先可以分享。家人掃描 QR code，就可以睇故事同留言。</p>
           <div class="share-controls">
             <label class="consent-toggle"><input id="sharing-consent" type="checkbox" ${state.sharing?.enabled ? "checked" : ""} /> 我同意分享呢段故事</label>
             <button id="create-share" class="primary" ${state.sharing?.enabled ? "" : "disabled"}>產生分享 QR Code</button>
@@ -605,10 +663,19 @@ function render() {
     reader.readAsDataURL(file);
   });
   document.querySelector("#create-story")?.addEventListener("click", () => {
+    const text = draftStory();
     state.story = {
       title: state.photo?.title || "我記得嘅一段日子",
-      text: draftStory(),
+      text,
       confirmed: false,
+      profileConfirmed: false,
+      profile: {
+        people: state.photo?.people || "待長者補充",
+        place: state.photo?.title?.includes("深水埗") ? "深水埗" : "待長者補充",
+        year: state.photo?.year || "待長者補充",
+        quote: text.split("。")[0] || "待長者選出原句",
+      },
+      sharePermissions: { story: true, quote: false, photo: false, details: false },
     };
     saveStory();
     render();
@@ -625,8 +692,15 @@ function render() {
       alert("請先寫一點故事內容。");
       return;
     }
+    const profileChecks = [...document.querySelectorAll("[data-profile]")];
+    if (profileChecks.some((checkbox) => !checkbox.checked)) {
+      alert("請先逐項確認人物、地點、年份同原句。");
+      return;
+    }
     state.story.text = text;
     state.story.confirmed = true;
+    state.story.profileConfirmed = true;
+    state.story.profile = getStoryProfile();
     saveStory();
     render();
   });
