@@ -91,10 +91,6 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    console.log('Proxy debug: target=', target);
-    console.log('Proxy debug: headers=', Object.keys(headers));
-    console.log('Proxy debug: outboundBodyPreview=', (JSON.stringify(outboundBody) || '').slice(0,2000));
-
     const resp = await fetch(target, {
       method: 'POST',
       headers,
@@ -103,10 +99,9 @@ app.post('/api/chat', async (req, res) => {
 
     const status = resp.status;
     const contentType = resp.headers.get('content-type') || '';
-    console.log('Proxy debug: upstream status=', status, 'content-type=', contentType);
+    console.log('Proxy upstream response:', status);
 
     let rawText = await resp.text();
-    console.log('Proxy debug: upstream rawTextPreview=', rawText ? rawText.slice(0,4000) : '');
 
     let data = null;
     if (contentType.includes('application/json')) {
@@ -141,7 +136,6 @@ app.post('/api/chat', async (req, res) => {
           text = findString(data);
         }
 
-        console.log('Proxy debug: extracted_text_preview=', (text || '').slice(0,1000));
         const openaiStyle = { choices: [ { message: { role: 'assistant', content: text || '' } } ] };
         return res.status(status).json(openaiStyle);
       }

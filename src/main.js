@@ -1,23 +1,33 @@
 import "./styles.css";
-import { AGENT_SYSTEM_PROMPT, DANGER_PATTERNS, SENSITIVE_PATTERNS } from "./agent-system-prompt.js";
+import { AGENT_SYSTEM_PROMPT, DANGER_PATTERNS } from "./agent-system-prompt.js";
 
-const STORAGE_KEY = "yiloi-transcript-v1";
-const STORY_KEY = "yiloi-story-v1";
-const SHARE_KEY = "yiloi-share-v1";
+const TRANSCRIPT_KEY = "yiloi-interview-transcript-v1";
+const PHOTO_KEY = "yiloi-interview-photo-v1";
+const STORY_KEY = "yiloi-interview-summary-v1";
+const SHARE_KEY = "yiloi-interview-share-v1";
+const INTERVIEW_ENDED_KEY = "yiloi-interview-ended-v1";
 const supportsSpeech = "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 const state = {
-  messages: JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"),
-  photo: JSON.parse(localStorage.getItem("yiloi-photo-v1") || "null"),
+  messages: JSON.parse(localStorage.getItem(TRANSCRIPT_KEY) || "[]"),
+  photo: JSON.parse(localStorage.getItem(PHOTO_KEY) || "null"),
   story: JSON.parse(localStorage.getItem(STORY_KEY) || "null"),
   sharing: JSON.parse(localStorage.getItem(SHARE_KEY) || "null"),
-  view: "senior",
+  view: "interview",
   topic: localStorage.getItem("yiloi-topic-v1") || "",
   focusMode: false,
   workflowStage: 1,
   listening: false,
   paused: false,
+  speaker: "elderly",
+  interviewConsent: false,
+  liveTranscript: "",
+  status: "",
+  suggestions: [],
+  suggestionsLoading: false,
+  summaryLoading: false,
+  interviewEnded: localStorage.getItem(INTERVIEW_ENDED_KEY) === "true",
   startedAt: Date.now(),
   recognition: null,
 };
@@ -33,37 +43,28 @@ function escapeHtml(value) {
 // 前端呼叫代理設定（可在 dev 時覆寫 window.PROXY_URL）
 const PROXY_URL = window.PROXY_URL || 'http://localhost:3001/api/chat';
 
-// 向後端代理查詢 LLM，失敗時回傳 null（呼叫者應 fallback）
+// Send staff-only assistance requests to the server-side AI proxy.
 async function queryProxy(messages) {
-  try {
-    const payload = { model: 'deepseek-flash', messages };
-    const resp = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      console.warn('Proxy returned', resp.status);
-      return null;
-    }
-    const ct = resp.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      const data = await resp.json();
-      // OpenAI-compatible response parsing
-      if (data.choices && data.choices[0] && data.choices[0].message) {
-        return data.choices[0].message.content;
-      }
-      // Other providers may return { reply: '...' }
-      if (data.reply) return data.reply;
-      // Fallback to first string field
-      const firstString = JSON.stringify(data);
-      return firstString;
-    }
-    return await resp.text();
-  } catch (err) {
-    console.error('queryProxy error', err);
-    return null;
+  const response = await fetch(PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "deepseek-flash", messages }),
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`AI request failed (${response.status}): ${responseText.slice(0, 300)}`);
   }
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error("AI proxy returned an invalid response.");
+  }
+  const content = data.choices?.[0]?.message?.content || data.reply;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("AI proxy returned no text.");
+  }
+  return content.trim();
 }
 
 function createQrCode() {
@@ -83,7 +84,7 @@ function createQrCode() {
 
 function renderSharePage() {
   if (!new URLSearchParams(window.location.search).has("story") || !state.story?.confirmed) return false;
-  const familyResponse = JSON.parse(localStorage.getItem("yiloi-family-response-v1") || "null");
+  const familyResponse = JSON.parse(localStorage.getItem("yiloi-interview-family-response-v1") || "null");
   const title = state.story.title || "我的回憶";
   app.innerHTML = `<div class="shell share-page">
     <header class="topbar"><div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div><span class="step">長者已確認</span></header>
@@ -118,7 +119,7 @@ function renderSharePage() {
   document.querySelector("#save-family-note")?.addEventListener("click", () => {
     const text = document.querySelector("#family-note").value.trim();
     if (!text) return;
-    localStorage.setItem("yiloi-family-response-v1", JSON.stringify({ text, at: new Date().toISOString() }));
+    localStorage.setItem("yiloi-interview-family-response-v1", JSON.stringify({ text, at: new Date().toISOString() }));
     renderSharePage();
   });
   document.querySelector("#cancel-family-note")?.addEventListener("click", () => { document.querySelector("#family-composer").hidden = true; });
@@ -144,11 +145,11 @@ const shareIcons = {
 };
 
 function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.messages));
+  localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(state.messages));
 }
 
 function savePhoto() {
-  localStorage.setItem("yiloi-photo-v1", JSON.stringify(state.photo));
+  localStorage.setItem(PHOTO_KEY, JSON.stringify(state.photo));
 }
 
 function saveStory() {
@@ -171,155 +172,219 @@ const memoryTopics = [
 function selectTopic(id) {
   state.topic = id;
   localStorage.setItem("yiloi-topic-v1", id);
-  const topic = memoryTopics.find(([topicId]) => topicId === id);
-  if (topic && state.messages.length <= 1) {
-    addMessage("agent", `好呀，我哋就由「${topic[1]}」開始。你最先諗起邊一件事？`);
-  } else {
-    render();
-  }
-}
-
-function draftStory() {
-  const userMessages = state.messages.filter((message) => message.role === "user");
-  if (!userMessages.length) return "";
-  return userMessages.map((message) => message.text).join(" ");
+  render();
 }
 
 function loadDemo() {
   state.messages = [
-    { role: "agent", text: "你好，我係憶旅，一個 AI 回憶助手，唔係真人。我唔會問你銀行資料、身份證號碼或者地址。今日食咗飯未？", at: new Date().toISOString() },
-    { role: "user", text: "我細個住喺深水埗，最鍾意睇婆婆煮飯。", at: new Date().toISOString() },
-    { role: "agent", text: "你記得深水埗同婆婆煮飯，嗰個廚房一定好有味道。婆婆最常煮咩餸？", at: new Date().toISOString() },
-    { role: "user", text: "佢最叻煮梅菜扣肉，屋企人返工返學都會一齊食。", at: new Date().toISOString() },
-    { role: "agent", text: "原來梅菜扣肉係你哋一家人一齊食飯嘅回憶。呢句好值得保留落嚟。", at: new Date().toISOString() },
+    { role: "staff", text: "你細個住喺邊度？有冇一段特別記得嘅日常生活？", at: new Date().toISOString() },
+    { role: "elderly", text: "我細個住喺深水埗，最鍾意睇婆婆煮飯。", at: new Date().toISOString() },
+    { role: "staff", text: "婆婆最常煮咩餸？", at: new Date().toISOString() },
+    { role: "elderly", text: "佢最叻煮梅菜扣肉，屋企人返工返學都會一齊食。", at: new Date().toISOString() },
   ];
-  state.photo = {
-    image: createDemoImage(),
-    title: "婆婆煮梅菜扣肉的廚房",
-    year: "1968",
-    people: "婆婆、屋企人",
-    caption: "婆婆最叻煮梅菜扣肉，屋企人返工返學都會一齊食。",
-    confirmed: true,
-  };
-  state.sharing = null;
-  state.story = {
-    title: "深水埗的飯香",
-    text: "我細個住喺深水埗，最鍾意記得婆婆煮飯。佢最叻煮梅菜扣肉，屋企人返工返學都會一齊食。對我嚟講，呢個唔只係一道餸，而係一家人坐埋一齊嘅日子。",
-    confirmed: true,
-  };
+  state.story = null;
+  state.suggestions = [];
+  state.interviewEnded = false;
+  state.paused = false;
+  state.status = "已載入示範逐字稿。呢啲係示範內容，唔係實際訪談。";
+  localStorage.removeItem(INTERVIEW_ENDED_KEY);
   save();
-  savePhoto();
   saveStory();
   render();
 }
 
-function createDemoImage() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
-    <rect width="900" height="600" fill="#e8d0ae"/>
-    <rect x="75" y="80" width="750" height="440" rx="24" fill="#fff7e9"/>
-    <circle cx="300" cy="265" r="90" fill="#b97752"/>
-    <circle cx="610" cy="270" r="90" fill="#d29b70"/>
-    <path d="M180 440h520v40H180z" fill="#8e6046"/>
-    <text x="450" y="145" text-anchor="middle" font-family="sans-serif" font-size="34" fill="#79513d">一齊食飯的日子</text>
-    <text x="450" y="570" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#79513d">Demo 示意圖片</text>
-  </svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "zh-HK";
-  utterance.rate = 0.85;
-  const voices = window.speechSynthesis.getVoices();
-  utterance.voice = voices.find((voice) =>
-    /yue|zh[-_]HK|粵|廣東|Cantonese/i.test(`${voice.lang} ${voice.name}`)
-  ) || voices.find((voice) => /zh[-_]HK/i.test(voice.lang));
-  window.speechSynthesis.speak(utterance);
-}
-
-function addMessage(role, text, options = {}) {
-  state.messages.push({ role, text, at: new Date().toISOString(), ...options });
+function addTranscriptEntry(role, text) {
+  const entry = { role, text: text.trim(), at: new Date().toISOString() };
+  state.messages.push(entry);
   save();
+  if (role === "elderly" && isDangerous(entry.text)) {
+    state.paused = true;
+    state.listening = false;
+    state.recognition?.stop();
+    state.status = "長者可能需要即時關心。請訪問者暫停訪談，陪伴長者並按機構安全流程處理。";
+  } else {
+    state.status = "逐字稿已儲存於此瀏覽器。";
+  }
   render();
-}
-
-function mockReply(text) {
-  const normalized = text.toLowerCase();
-  if (normalized.includes("唔記得")) {
-    return "唔緊要，我哋慢慢諗。嗰陣時有冇一首歌、一種食物，或者電視劇令你諗返起嗰段日子？";
-  }
-  if (normalized.includes("食") || normalized.includes("飯")) {
-    return "你頭先講到食嘢，聽落你好記得嗰種味道。以前邊個最常煮俾你食？";
-  }
-  if (normalized.includes("細個") || normalized.includes("年輕") || normalized.includes("以前")) {
-    return "你講到以前嘅日子喇。當時你住喺邊度？附近有冇一個你特別記得嘅地方？";
-  }
-  return `我聽到你講「${text.slice(0, 36)}${text.length > 36 ? "…" : ""}」。呢個細節好有畫面，你當時身邊仲有邊個人？`;
 }
 
 function isDangerous(text) {
   return DANGER_PATTERNS.some((pattern) => text.includes(pattern));
 }
 
-async function handleTranscript(text) {
-  if (!text.trim() || state.paused) return;
-  addMessage("user", text.trim());
-  if (isDangerous(text)) {
-    state.paused = true;
-    addMessage("agent", "多謝你肯同我講呢啲感受。你唔使一個人頂住，我哋而家先停一停，搵真人照顧者陪住你。");
-    speak("多謝你肯同我講呢啲感受。我哋而家先停一停，搵真人照顧者陪住你。");
+function handleTranscript(text, speaker = state.speaker) {
+  const trimmedText = text.trim();
+  if (!trimmedText || state.paused || state.interviewEnded) return;
+  addTranscriptEntry(speaker, trimmedText);
+}
+
+function transcriptForAi() {
+  return state.messages
+    .map(({ role, text }) => `${role === "staff" ? "訪問者" : "長者"}：${text}`)
+    .join("\n");
+}
+
+async function generateSuggestions() {
+  if (!state.messages.some((message) => message.role === "elderly")) return;
+  if (!state.interviewConsent) {
+    state.status = "請先取得雙方同意，才可將逐字稿傳送至 AI 生成建議。";
+    render();
     return;
   }
-
-  // 優先嘗試呼叫後端代理，失敗時回退至本地 mock
-  const conversation = [
-    { role: 'system', content: AGENT_SYSTEM_PROMPT },
-    ...state.messages.map((m) => ({ role: m.role === 'agent' ? 'assistant' : m.role, content: m.text })),
-  ];
-  let reply = null;
+  state.suggestionsLoading = true;
+  state.status = "AI 正為訪問者準備可選追問…";
+  render();
   try {
-    reply = await queryProxy(conversation);
-  } catch (e) {
-    console.warn('proxy call failed', e);
-    reply = null;
+    const suggestions = await queryProxy([
+      {
+        role: "system",
+        content: "你是訪談工作人員的幕後助手，不會直接與長者對話。根據逐字稿，用香港繁體中文提供最多 3 條簡短、開放式、溫和的可選追問。只輸出問題清單，不要推測或補充逐字稿沒有的事實。",
+      },
+      { role: "user", content: `訪談逐字稿：\n${transcriptForAi()}` },
+    ]);
+    state.suggestions = suggestions
+      .split("\n")
+      .map((line) => line.replace(/^\s*[-*•\d.、)]+\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    state.status = "追問建議已準備好；由訪問者決定是否使用。";
+  } catch (error) {
+    console.error("Could not generate interview suggestions", error);
+    state.status = `未能取得 AI 追問建議：${error.message}`;
+  } finally {
+    state.suggestionsLoading = false;
+    render();
   }
+}
 
-  if (!reply) {
-    // fallback to local mock
-    reply = mockReply(text);
+async function endInterview() {
+  if (state.listening) {
+    await stopListening();
   }
-
-  const sensitive = SENSITIVE_PATTERNS.some((pattern) => text.includes(pattern));
-  addMessage("agent", sensitive ? `我聽到你提到一段重要而可能難受嘅經歷。${reply}如果你想休息，我哋可以下次再傾。` : reply);
-  speak(sensitive ? `我聽到你提到一段重要而可能難受嘅經歷。${reply}` : reply);
+  if (state.paused) {
+    state.status = "請先由真人訪問者按安全流程跟進，再考慮整理摘要。";
+    render();
+    return;
+  }
+  if (!state.messages.some((message) => message.role === "elderly")) {
+    state.status = "請先記錄長者分享的內容，再生成摘要。";
+    render();
+    return;
+  }
+  if (!state.interviewConsent) {
+    state.status = "請先取得雙方同意，才可將逐字稿傳送至 AI 生成摘要。";
+    render();
+    return;
+  }
+  state.summaryLoading = true;
+  state.status = "AI 正在整理逐字稿；請訪問者核對摘要。";
+  render();
+  try {
+    const summary = await queryProxy([
+      {
+        role: "system",
+        content: "你是訪談工作人員的幕後摘要助手，不會直接回覆長者。請以香港繁體中文忠實整理長者說過的內容，簡潔涵蓋重要人物、地點、事件、感受和待確認細節。不可捏造或把訪問者說的內容當成長者經歷。只輸出摘要草稿，並提醒工作人員及長者核對。",
+      },
+      { role: "user", content: `請根據以下人與人訪談逐字稿整理摘要：\n${transcriptForAi()}` },
+    ]);
+    state.story = { title: "訪談摘要（待核對）", text: summary, confirmed: false };
+    saveStory();
+    state.interviewEnded = true;
+    localStorage.setItem(INTERVIEW_ENDED_KEY, "true");
+    state.status = "摘要已生成並儲存。請與長者一起核對後再確認或分享。";
+    state.focusMode = false;
+  } catch (error) {
+    console.error("Could not summarize interview", error);
+    state.status = `未能生成摘要：${error.message}`;
+  } finally {
+    state.summaryLoading = false;
+    render();
+  }
 }
 
 function startListening() {
   if (!supportsSpeech) {
-    document.querySelector("#manual-input").focus();
+    state.status = "此瀏覽器不支援語音轉錄；請使用下方文字欄記錄對話。";
+    render();
+    document.querySelector("#manual-input")?.focus();
+    return;
+  }
+  if (!state.interviewConsent) {
+    state.status = "請先取得訪問者及長者同意，並勾選訪談處理同意。";
+    render();
     return;
   }
   if (state.listening) {
-    state.recognition?.stop();
+    stopListening();
     return;
   }
   state.recognition = new SpeechRecognition();
   state.recognition.lang = "zh-HK";
-  state.recognition.interimResults = false;
-  state.recognition.continuous = false;
-  state.recognition.onstart = () => { state.listening = true; render(); };
-  state.recognition.onend = () => { state.listening = false; render(); };
-  state.recognition.onerror = () => { state.listening = false; render(); };
-  state.recognition.onresult = (event) => handleTranscript(event.results[0][0].transcript);
-  state.recognition.start();
-  render();
+  state.recognition.interimResults = true;
+  state.recognition.continuous = true;
+  const speaker = state.speaker;
+  state.liveTranscript = "";
+  const recognition = state.recognition;
+  state.status = `正在轉錄${speaker === "staff" ? "訪問者" : "長者"}；按停止後加入逐字稿。`;
+  recognition.onstart = () => { state.listening = true; render(); };
+  state.recognition.onresult = (event) => {
+    state.liveTranscript = Array.from(event.results)
+      .map((result) => result[0].transcript)
+      .join(" ")
+      .trim();
+    const preview = document.querySelector("#live-preview");
+    if (preview) preview.textContent = state.liveTranscript;
+  };
+  recognition.onerror = (event) => {
+    state.listening = false;
+    state.status = `語音轉錄失敗（${event.error}）。可改用文字輸入。`;
+    render();
+  };
+  recognition.onend = () => {
+    const transcript = state.liveTranscript;
+    state.liveTranscript = "";
+    if (transcript) {
+      handleTranscript(transcript, speaker);
+    }
+    if (state.listening && !state.paused) {
+      try {
+        recognition.start();
+      } catch (error) {
+        state.listening = false;
+        state.status = `無法繼續語音轉錄：${error.message}`;
+        render();
+      }
+    } else if (!transcript) {
+      state.status = "未辨識到語音；可以重試或改用文字輸入。";
+      render();
+    }
+  };
+  try {
+    state.recognition.start();
+    render();
+  } catch (error) {
+    state.status = `無法啟動語音轉錄：${error.message}`;
+    render();
+  }
+}
+
+function stopListening() {
+  const recognition = state.recognition;
+  if (!recognition || !state.listening) return Promise.resolve();
+  state.listening = false;
+  return new Promise((resolve) => {
+    const onEnd = recognition.onend;
+    recognition.onend = (event) => {
+      onEnd?.call(recognition, event);
+      resolve();
+    };
+    recognition.stop();
+  });
 }
 
 function renderFocusMode() {
-  const lastAgent = [...state.messages].reverse().find((message) => message.role === "agent");
-  const lastUser = [...state.messages].reverse().find((message) => message.role === "user");
+  const lastEntry = state.messages[state.messages.length - 1];
+  const speakerLabel = (speaker) => speaker === "staff" ? "訪問者" : "長者";
   app.innerHTML = `<div class="focus-shell">
     <header class="focus-topbar">
       <button id="exit-focus" class="focus-back">← 返回完整畫面</button>
@@ -327,21 +392,31 @@ function renderFocusMode() {
       <span class="focus-time">本節 ${Math.floor((Date.now() - state.startedAt) / 60000)} / 45 分鐘</span>
     </header>
     <main class="focus-main">
-      <p class="eyebrow">${state.topic ? `主題：${escapeHtml(memoryTopics.find(([id]) => id === state.topic)?.[1] || "")}` : "廣東話語音對話"}</p>
+      <p class="eyebrow">${state.topic ? `訪談主題：${escapeHtml(memoryTopics.find(([id]) => id === state.topic)?.[1] || "")}` : "訪問者與長者面對面對話"}</p>
       <div class="focus-orb ${state.listening ? "is-listening" : ""}"><span>${state.listening ? "■" : "🎙"}</span></div>
-      <h1>${state.listening ? "我聽緊你講…" : "可以同我講嘢喇"}</h1>
-      <p class="focus-hint">${state.listening ? "講完之後，我會耐心聽你講完。" : "撳住下面個咪高風，慢慢講就得。"}</p>
-      ${lastUser ? `<div class="focus-transcript"><span>你剛才講：</span><p>「${escapeHtml(lastUser.text)}」</p></div>` : ""}
-      ${lastAgent ? `<div class="focus-agent"><span>憶旅</span><p>${escapeHtml(lastAgent.text)}</p><button id="focus-speak" class="speak-button">🔊 再讀一次</button></div>` : ""}
-      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}"><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止聆聽" : "按一下開始講"}</strong></button>
-      <div class="focus-actions"><button id="focus-rest" class="secondary">休息一陣</button><button id="focus-end" class="text-button">結束今次對話</button></div>
+      <h1>${state.listening ? `正在轉錄${speakerLabel(state.speaker)}…` : "繼續你們的對話"}</h1>
+      <p class="focus-hint">AI 只會協助轉錄和整理摘要，不會代替訪問者發問或回覆。</p>
+      <label class="transcription-consent"><input id="focus-transcription-consent" type="checkbox" ${state.interviewConsent ? "checked" : ""} /> 訪問者及長者同意使用瀏覽器語音轉錄，並將逐字稿傳送至設定的 AI 服務生成建議及摘要；本應用不保存音訊</label>
+      ${lastEntry ? `<div class="focus-transcript"><span>${speakerLabel(lastEntry.role)}・最近記錄</span><p>「${escapeHtml(lastEntry.text)}」</p></div>` : ""}
+      ${state.listening ? `<div class="live-preview" id="live-preview">${escapeHtml(state.liveTranscript || "聆聽中…")}</div>` : ""}
+      <div class="speaker-picker" aria-label="選擇正在說話的人">
+        <button id="focus-speaker-staff" class="${state.speaker === "staff" ? "selected" : ""}" aria-pressed="${state.speaker === "staff"}" ${state.listening ? "disabled" : ""}>訪問者講緊</button>
+        <button id="focus-speaker-elderly" class="${state.speaker === "elderly" ? "selected" : ""}" aria-pressed="${state.speaker === "elderly"}" ${state.listening ? "disabled" : ""}>長者講緊</button>
+      </div>
+      <button id="focus-listen" class="focus-mic ${state.listening ? "active" : ""}" ${state.interviewEnded || state.paused ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><strong>${state.listening ? "停止轉錄" : "開始轉錄"}</strong></button>
+      <div class="focus-actions"><button id="focus-end" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : "結束訪談並生成摘要"}</button></div>
+      ${state.status ? `<p class="status-message" role="status">${escapeHtml(state.status)}</p>` : ""}
     </main>
   </div>`;
   document.querySelector("#exit-focus").addEventListener("click", () => { state.focusMode = false; render(); });
   document.querySelector("#focus-listen").addEventListener("click", startListening);
-  document.querySelector("#focus-speak").addEventListener("click", () => speak(lastAgent?.text || ""));
-  document.querySelector("#focus-rest").addEventListener("click", () => alert("好，我哋休息一陣先。準備好再撳咪高風。"));
-  document.querySelector("#focus-end").addEventListener("click", () => { state.focusMode = false; render(); });
+  document.querySelector("#focus-transcription-consent").addEventListener("change", (event) => {
+    state.interviewConsent = event.target.checked;
+    if (!state.interviewConsent && state.listening) stopListening();
+  });
+  document.querySelector("#focus-speaker-staff").addEventListener("click", () => { state.speaker = "staff"; render(); });
+  document.querySelector("#focus-speaker-elderly").addEventListener("click", () => { state.speaker = "elderly"; render(); });
+  document.querySelector("#focus-end").addEventListener("click", endInterview);
 }
 
 function renderWorkflow() {
@@ -356,8 +431,8 @@ function renderWorkflow() {
       <div class="prep-cards"><span>長者背景卡</span><span>今日 3 條建議題目</span><span>避開話題</span></div></div>
     </div>`,
     2: `<div class="workflow-content">
-      <div class="workflow-icon live">●</div><div><h3>專心陪伴，唔使低頭抄筆記</h3><p>訪問者繼續望住長者傾偈。AI 在背景轉錄、標記人名地點年份，並在需要時提示休息或轉換話題。</p>
-      <div class="tool-note"><strong>AI 工具提示</strong><span>「深水埗」 · 地點</span><span>「18 歲」 · 年份</span><span>可稍後追問</span></div></div>
+      <div class="workflow-icon live">●</div><div><h3>訪問者與長者真人對話</h3><p>訪問者主導提問及聆聽。AI 只按選定的說話者轉錄對話，並可提供可選追問，不會直接回覆長者。</p>
+      <div class="tool-note"><strong>AI 幕後支援</strong><span>即時逐字稿</span><span>可選追問</span><span>不保存音訊</span></div></div>
     </div>`,
     3: `<div class="workflow-content">
       <div class="workflow-icon">♡</div><div><h3>故事係邀請，不係終點</h3><p>長者先確認內容及分享權限。之後家人可以閱讀、回應，為下一次真人見面帶來新話題。</p>
@@ -377,20 +452,20 @@ function renderCaregiverDashboard() {
   app.innerHTML = `<div class="shell dashboard">
     <header class="topbar">
       <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
-      <button id="back-to-senior" class="secondary">返回長者模式</button>
+      <button id="back-to-senior" class="secondary">返回訪談工作區</button>
     </header>
     <section class="dashboard-hero">
-      <p class="eyebrow">照顧者視角・Demo</p>
-      <h1>早晨，陳姑娘</h1>
-      <p>以下係阿梅婆婆主動同憶旅分享嘅內容。只顯示已獲同意嘅摘要。</p>
+      <p class="eyebrow">工作人員視角・Demo</p>
+      <h1>訪談摘要與長者回憶</h1>
+      <p>以下只顯示工作人員與長者共同核對並確認的摘要內容。</p>
     </section>
     <section class="status-grid">
       <article class="status-card"><span class="status-icon">◷</span><small>最近對話</small><strong>今日 10:24</strong><span class="status-good">已完成</span></article>
-      <article class="status-card"><span class="status-icon">♡</span><small>故事進度</small><strong>${storyStatus}</strong><span class="status-good">${state.story?.confirmed ? "可以分享" : "等待審閱"}</span></article>
+      <article class="status-card"><span class="status-icon">♡</span><small>摘要進度</small><strong>${storyStatus}</strong><span class="status-good">${state.story?.confirmed ? "可以分享" : "等待核對"}</span></article>
       <article class="status-card ${state.paused ? "attention" : ""}"><span class="status-icon">!</span><small>安全狀態</small><strong>${safetyStatus}</strong><span>${state.paused ? "請聯絡長者" : "一切正常"}</span></article>
     </section>
     <section class="dashboard-panel">
-      <div class="panel-heading"><div><p class="eyebrow">最近完成</p><h2>阿梅婆婆的故事</h2></div><span class="ai-label">長者已確認</span></div>
+      <div class="panel-heading"><div><p class="eyebrow">訪談後摘要</p><h2>長者回憶摘要</h2></div><span class="ai-label">長者已確認</span></div>
       ${state.story?.confirmed ? `<p class="dashboard-quote">「${escapeHtml(state.story.text.slice(0, 90))}${state.story.text.length > 90 ? "…" : ""}」</p>
         <div class="dashboard-actions"><button id="dashboard-preview" class="primary">預覽故事</button><button id="dashboard-message" class="secondary">留一句話</button></div>` : `<div class="dashboard-empty">長者完成審閱後，確認嘅故事會顯示喺呢度。</div>`}
     </section>
@@ -398,11 +473,11 @@ function renderCaregiverDashboard() {
       <div class="panel-heading"><div><p class="eyebrow">回憶資料</p><h2>相片及內容</h2></div><span class="step">${state.photo ? "1 張相片" : "未有相片"}</span></div>
       ${state.photo ? `<div class="dashboard-memory"><img src="${state.photo.image}" alt="${escapeHtml(state.photo.title || "回憶相片")}" /><div><h3>${escapeHtml(state.photo.title || "未命名回憶")}</h3><p>${escapeHtml(state.photo.caption || "未有補充內容。")}</p><span class="status-good">由長者選擇分享</span></div></div>` : `<div class="dashboard-empty">長者尚未上載相片。</div>`}
     </section>
-    <p class="dashboard-note">Demo 介面：真實版本會根據長者同意及機構權限顯示資料。</p>
+    <p class="dashboard-note">Demo 介面：摘要及逐字稿目前只儲存在此瀏覽器，不會同步到機構系統。</p>
   </div>`;
-  document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "senior"; render(); });
+  document.querySelector("#back-to-senior").addEventListener("click", () => { state.view = "interview"; render(); });
   document.querySelector("#dashboard-preview")?.addEventListener("click", () => {
-    state.view = "senior";
+    state.view = "interview";
     render();
     document.querySelector(".story-section")?.scrollIntoView({ behavior: "smooth" });
   });
@@ -422,32 +497,31 @@ function render() {
   const selectedTopic = memoryTopics.find(([id]) => id === state.topic);
   const messages = state.messages.length
     ? state.messages.map((message) => `<article class="message ${message.role}">
-        <span class="role">${message.role === "agent" ? "憶旅" : "我"}</span>
+        <span class="role">${message.role === "staff" ? "訪問者" : "長者"}</span>
         <p>${escapeHtml(message.text)}</p>
-        ${message.role === "agent" ? `<button class="speak-button" data-speak="${escapeHtml(message.text)}">🔊 再讀一次</button>` : ""}
       </article>`).join("")
-    : `<div class="empty"><span class="wave">☊</span><p>準備好聽你講故事喇。</p></div>`;
+    : `<div class="empty"><span class="wave">☊</span><p>訪問者與長者開始對話後，逐字稿會顯示喺呢度。</p></div>`;
 
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
         <div><span class="brand-mark">憶</span><span class="brand">憶旅</span></div>
         <div class="top-actions">
-          <button id="load-demo" class="demo-button">▶ Demo 示範</button>
-          <button id="caregiver-view" class="dashboard-button">照顧者模式</button>
-          <button id="focus-view" class="focus-button">全屏傾偈</button>
+          <button id="load-demo" class="demo-button">▶ 載入示範逐字稿</button>
+          <button id="caregiver-view" class="dashboard-button">工作人員模式</button>
+          <button id="focus-view" class="focus-button">全屏訪談</button>
           <span class="timer">本節 ${elapsed} / 45 分鐘</span>
         </div>
       </header>
       <section class="intro">
-        <p class="eyebrow">真人陪伴・AI 幕後支援</p>
-        <h1>${selectedTopic ? `今日講吓：${selectedTopic[1]}` : "今日想由邊段回憶開始？"}</h1>
-        <p>訪問者會由頭到尾陪住你傾偈。憶旅只會幫忙記錄、整理同準備下一次話題。</p>
+        <p class="eyebrow">人與人對話・AI 幕後記錄</p>
+        <h1>${selectedTopic ? `訪談主題：${selectedTopic[1]}` : "長者回憶訪談"}</h1>
+        <p>訪問者與長者面對面傾談。AI 只負責轉錄、提供可選追問及整理摘要，不會代替訪問者同長者對話。</p>
       </section>
       ${renderWorkflow()}
       <section class="topic-section">
         <div class="section-heading">
-          <div><p class="eyebrow">揀一個你想講嘅方向</p><h2>由邊段回憶開始？</h2></div>
+          <div><p class="eyebrow">訪問前準備</p><h2>選擇訪談方向</h2></div>
           ${selectedTopic ? `<button id="change-topic" class="text-button">更換主題</button>` : ""}
         </div>
         <div class="topic-grid">
@@ -457,32 +531,59 @@ function render() {
         </div>
       </section>
       ${state.paused ? `<section class="safety-alert" role="alert">
-        <strong>我哋先停一停</strong>
-        <p>你嘅感受好重要。請搵身邊嘅真人照顧者陪住你。</p>
-        <button id="notify-caregiver" class="primary">叫人嚟幫手（模擬通知）</button>
-        <button id="resume" class="secondary">休息／下次再講</button>
+        <strong>請訪問者先停一停</strong>
+        <p>逐字稿出現可能需要關心的內容。請由真人訪問者陪伴長者，並按機構安全流程處理；AI 不會自動回覆長者。</p>
+        <button id="resume" class="secondary">訪問者確認後繼續記錄</button>
       </section>` : ""}
-      <section class="conversation" aria-live="polite">${messages}</section>
+      <section class="interview-panel" aria-labelledby="transcript-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow">訪談中</p><h2 id="transcript-heading">對話逐字稿</h2></div>
+          <span class="step">${state.messages.length} 段記錄</span>
+        </div>
+        <p class="interview-instructions">開始前先取得訪問者及長者同意。語音可能由瀏覽器服務處理；生成追問或摘要時，逐字稿會傳送到設定的 AI 服務。本應用不會保存音訊。</p>
+        <label class="transcription-consent"><input id="transcription-consent" type="checkbox" ${state.interviewConsent ? "checked" : ""} /> 訪問者及長者同意語音轉錄及將逐字稿傳送至 AI 服務</label>
+        <section class="conversation" aria-live="polite">${messages}</section>
+        ${state.listening ? `<div class="live-preview"><strong>即時辨識中・${state.speaker === "staff" ? "訪問者" : "長者"}</strong><p id="live-preview">${escapeHtml(state.liveTranscript || "聆聽中…")}</p></div>` : ""}
+        <form id="composer" class="${state.paused || state.interviewEnded ? "disabled" : ""}">
+          <div class="speaker-picker" aria-label="選擇正在說話的人">
+            <button id="speaker-staff" type="button" class="${state.speaker === "staff" ? "selected" : ""}" aria-pressed="${state.speaker === "staff"}" ${state.listening ? "disabled" : ""}>訪問者講緊</button>
+            <button id="speaker-elderly" type="button" class="${state.speaker === "elderly" ? "selected" : ""}" aria-pressed="${state.speaker === "elderly"}" ${state.listening ? "disabled" : ""}>長者講緊</button>
+          </div>
+          <div class="composer-row">
+            <input id="manual-input" aria-label="輸入訪談內容" placeholder="${state.speaker === "staff" ? "輸入訪問者說的內容…" : "輸入長者說的內容…"}" ${state.paused || state.interviewEnded ? "disabled" : ""} />
+            <button class="mic ${state.listening ? "active" : ""}" type="button" id="listen" aria-label="開始粵語語音轉錄" ${state.paused || state.interviewEnded ? "disabled" : ""}><span>${state.listening ? "■" : "🎙"}</span><small>${state.listening ? "停止轉錄" : "開始轉錄"}</small></button>
+            <button class="send" type="submit" ${state.paused || state.interviewEnded || state.listening ? "disabled" : ""}>加入逐字稿</button>
+          </div>
+        </form>
+        ${state.status ? `<p class="status-message" role="status">${escapeHtml(state.status)}</p>` : ""}
+      </section>
+      <section class="followup-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">只供工作人員參考</p><h2>可選追問建議</h2></div>
+          <button id="suggest-questions" class="secondary" ${!state.messages.some((message) => message.role === "elderly") || state.suggestionsLoading || state.interviewEnded ? "disabled" : ""}>${state.suggestionsLoading ? "準備中…" : "生成追問建議"}</button>
+        </div>
+        <p class="interview-instructions">由訪問者自行決定是否採用；AI 不會把建議直接說給長者聽。</p>
+        ${state.suggestions.length ? `<ul class="suggestion-list">${state.suggestions.map((suggestion) => `<li>${escapeHtml(suggestion)}</li>`).join("")}</ul>` : ""}
+      </section>
       <section class="story-section">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">長者主導</p>
-            <h2>整理成一段故事</h2>
+            <p class="eyebrow">訪談後</p>
+            <h2>AI 訪談摘要</h2>
           </div>
-          <span class="step">需要確認</span>
+          <button id="end-interview" class="primary" ${!state.messages.some((message) => message.role === "elderly") || state.summaryLoading || state.interviewEnded ? "disabled" : ""}>${state.summaryLoading ? "正在生成摘要…" : state.interviewEnded ? "訪談已結束" : "結束訪談並生成摘要"}</button>
         </div>
         ${state.story ? `<article class="story-review">
-          <span class="ai-label">AI 整理・${state.story.confirmed ? "已確認" : "尚未確認"}</span>
-          <h3>${escapeHtml(state.story.title || "我的回憶")}</h3>
-          <p class="review-help">以下內容只係草稿。你可以直接修改，確認後先會加入故事書。</p>
-          <textarea id="story-editor" rows="7" aria-label="故事內容">${escapeHtml(state.story.text)}</textarea>
+          <span class="ai-label">AI 摘要・${state.story.confirmed ? "已確認" : "待核對"}</span>
+          <h3>${escapeHtml(state.story.title || "訪談摘要")}</h3>
+          <p class="review-help">摘要只根據逐字稿整理，不代表事實已核實。請工作人員與長者一起核對及修改。</p>
+          <textarea id="story-editor" rows="7" aria-label="訪談摘要">${escapeHtml(state.story.text)}</textarea>
           <div class="review-actions">
-            <button id="save-story-draft" class="secondary">儲存修改</button>
-            ${state.story.confirmed ? `<div class="confirmed">✓ 已加入故事書</div>` : `<button id="confirm-story-text" class="primary">我確認呢段故事</button>`}
+            <button id="save-story-draft" class="secondary">儲存摘要修改</button>
+            ${state.story.confirmed ? `<div class="confirmed">✓ 已確認摘要</div>` : `<button id="confirm-story-text" class="primary">長者確認摘要</button>`}
           </div>
         </article>` : `<div class="story-empty">
-          <p>對話後，憶旅會將你講過嘅內容整理成草稿。</p>
-          <button id="create-story" class="primary" ${draftStory() ? "" : "disabled"}>整理對話成故事草稿</button>
+          <p>結束訪談後，AI 會整理長者說過的內容；摘要會先供工作人員和長者核對。</p>
         </div>`}
       </section>
       <section class="share-section">
@@ -548,19 +649,22 @@ function render() {
           <button class="primary" type="submit">生成故事卡</button>
         </form>`}
       </section>
-      <form id="composer" class="${state.paused ? "disabled" : ""}">
-        <input id="manual-input" aria-label="輸入你想講嘅內容" placeholder="可以打字，或者撳咪講嘢…" ${state.paused ? "disabled" : ""} />
-        <button class="mic ${state.listening ? "active" : ""}" type="button" id="listen" aria-label="開始粵語語音輸入"><span>${state.listening ? "■" : "🎙"}</span><small>${state.listening ? "停止" : "講廣東話"}</small></button>
-        <button class="send" type="submit" ${state.paused ? "disabled" : ""}>送出</button>
-      </form>
       <footer>
-        <button id="clear" class="text-button">清除本次逐字稿</button>
-        <span>內容只儲存在此瀏覽器（Demo）</span>
+        <button id="clear" class="text-button" ${state.listening ? "disabled" : ""}>清除本次逐字稿</button>
+        <span>逐字稿及摘要儲存在此瀏覽器；音訊不會由本應用保存。</span>
       </footer>
-      <details class="trust"><summary>了解憶旅如何工作</summary><p>${escapeHtml(AGENT_SYSTEM_PROMPT)}</p></details>
+      <details class="trust"><summary>了解語音轉錄及 AI 摘要</summary><p>${escapeHtml(AGENT_SYSTEM_PROMPT)} 語音辨識可能由瀏覽器或作業系統服務處理；開始前請先取得訪談者及長者同意。</p></details>
     </div>`;
 
   document.querySelector("#listen").addEventListener("click", startListening);
+  document.querySelector("#transcription-consent").addEventListener("change", (event) => {
+    state.interviewConsent = event.target.checked;
+    if (!state.interviewConsent && state.listening) stopListening();
+  });
+  document.querySelector("#speaker-staff").addEventListener("click", () => { state.speaker = "staff"; render(); });
+  document.querySelector("#speaker-elderly").addEventListener("click", () => { state.speaker = "elderly"; render(); });
+  document.querySelector("#suggest-questions").addEventListener("click", generateSuggestions);
+  document.querySelector("#end-interview").addEventListener("click", endInterview);
   document.querySelectorAll("[data-workflow-stage]").forEach((button) => button.addEventListener("click", () => {
     state.workflowStage = Number(button.dataset.workflowStage);
     render();
@@ -574,7 +678,7 @@ function render() {
   document.querySelector("#caregiver-view").addEventListener("click", () => { state.view = "caregiver"; render(); });
   document.querySelector("#focus-view").addEventListener("click", () => { state.focusMode = true; render(); });
   document.querySelector("#load-demo").addEventListener("click", () => {
-    if (state.messages.length && !confirm("載入 Demo 內容會取代目前逐字稿，是否繼續？")) return;
+    if (state.messages.length && !confirm("載入示範逐字稿會取代目前逐字稿及摘要，是否繼續？")) return;
     loadDemo();
   });
   document.querySelector("#sharing-consent")?.addEventListener("change", (event) => {
@@ -617,11 +721,25 @@ function render() {
   document.querySelector("#composer").addEventListener("submit", (event) => {
     event.preventDefault();
     const input = document.querySelector("#manual-input");
-    handleTranscript(input.value);
+    const text = input.value;
     input.value = "";
+    handleTranscript(text);
   });
   document.querySelector("#clear").addEventListener("click", () => {
-    if (confirm("確定清除本次逐字稿？")) { state.messages = []; save(); render(); }
+    if (confirm("確定清除本次逐字稿及未確認摘要？")) {
+      state.messages = [];
+      state.suggestions = [];
+      state.interviewEnded = false;
+      state.paused = false;
+      if (!state.story?.confirmed) {
+        state.story = null;
+        saveStory();
+      }
+      state.status = "已清除本次逐字稿。";
+      localStorage.removeItem(INTERVIEW_ENDED_KEY);
+      save();
+      render();
+    }
   });
   document.querySelector("#photo-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -658,15 +776,6 @@ function render() {
     };
     reader.readAsDataURL(file);
   });
-  document.querySelector("#create-story")?.addEventListener("click", () => {
-    state.story = {
-      title: state.photo?.title || "我記得嘅一段日子",
-      text: draftStory(),
-      confirmed: false,
-    };
-    saveStory();
-    render();
-  });
   document.querySelector("#save-story-draft")?.addEventListener("click", () => {
     state.story.text = document.querySelector("#story-editor").value.trim();
     state.story.confirmed = false;
@@ -694,21 +803,15 @@ function render() {
     savePhoto();
     render();
   });
-  document.querySelectorAll("[data-speak]").forEach((button) => button.addEventListener("click", () => speak(button.dataset.speak)));
-  document.querySelector("#notify-caregiver")?.addEventListener("click", (event) => {
-    event.currentTarget.textContent = "已通知照顧者（Demo）";
-    event.currentTarget.disabled = true;
-  });
   document.querySelector("#resume")?.addEventListener("click", () => {
     state.paused = false;
-    addMessage("agent", "好，我哋休息一陣先。你準備好嘅時候，再同我講都得。");
+    state.status = "訪問者已確認可繼續記錄。";
+    render();
   });
 }
 
 if (renderSharePage()) {
   // Read-only share view.
-} else if (state.messages.length === 0) {
-  addMessage("agent", "你好，我係憶旅，一個 AI 回憶助手，唔係真人。我唔會問你銀行資料、身份證號碼或者地址。今日食咗飯未？我哋可以先輕鬆傾兩句。");
 } else {
   render();
 }
